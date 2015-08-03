@@ -55,7 +55,7 @@ FIFO = -1
 #
 #
 
-BUFFER_NAME_TEMPLATE = '{basename_layerpath/e6copy-/e6d-/d/foo}'
+BUFFER_NAME_TEMPLATE = '{basename_layerpath}'
 
 # MODE should be either LIFO or FIFO.
 # In LIFO mode, the last item you copied is the first to be pasted (the 'queue' empties from the end)
