@@ -51,6 +51,7 @@ def applyparentlayer(image, drawable):
     pdb.gimp_image_undo_group_end(image)
 
 def applygrandparentlayer(image, drawable):
+    pdb.gimp_image_undo_group_start(image)
     if not drawable:
         drawable = image.active_layer
     parent = pdb.gimp_item_get_parent(drawable)
