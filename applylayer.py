@@ -17,20 +17,19 @@ def applylayer(image, drawable):
     # ugh, why is drawable usually None????
     if not drawable:
         drawable = image.active_layer
-    # 1. Duplicate this layer/group (recursively)
-    # 2. Move this down (so it is in the position the non-duplicate was in before)
-    # 3. Merge Down the duplicate
-    # 4. Clear original layer content
-    # 5. Reactivate the original layer
+
+    parent = pdb.gimp_item_get_parent(drawable)
+    if parent and len(parent.children) == 1:
+        # don't try to merge down when there is no layer below to merge onto.
+        return
     pdb.gimp_image_undo_group_start(image)
     origindex = pdb.gimp_image_get_item_position(image, drawable)
     sel = None
     if pdb.gimp_selection_bounds(image)[0] != 0:
         sel = pdb.gimp_selection_save(image)
-    parent = pdb.gimp_item_get_parent(drawable)
     dupe = pdb.gimp_layer_copy(drawable, 0)
     pdb.gimp_image_insert_layer(image, dupe, parent, origindex+1)
-    pdb.gimp_image_merge_down(image, dupe, CLIP_TO_BOTTOM_LAYER)
+    image.merge_down(dupe, CLIP_TO_BOTTOM_LAYER)
     pdb.gimp_selection_none(image)
     for layer in _item_get_clearable(drawable):
         pdb.gimp_edit_clear(layer)
@@ -39,6 +38,20 @@ def applylayer(image, drawable):
         pdb.gimp_item_delete(sel)
     image.active_layer = drawable
     pdb.gimp_image_undo_group_end(image)
+
+def applyparentlayer(image, drawable):
+    if not drawable:
+        drawable = image.active_layer
+    parent = pdb.gimp_item_get_parent(drawable)
+    if parent:
+        applylayer(image, parent)
+
+def applygrandparentlayer(image, drawable):
+    if not drawable:
+        drawable = image.active_layer
+    parent = pdb.gimp_item_get_parent(drawable)
+    if parent:
+        applyparentlayer(image, parent)
 
 
 register(
@@ -56,9 +69,48 @@ register(
             ],
     results=[],
     function=applylayer,
-    menu=("<Image>/Layer"), 
+    menu=("<Image>/Layer"),
     domain=("gimp20-python", gimp.locale_directory)
     )
+
+register(
+    proc_name="python-fu-applyparentlayer",
+    blurb="Apply Parent Layer (merge all content in parent layer down, clear all member layers, but do not remove layers)",
+    help=".",
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Apply paren_t"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            ],
+    results=[],
+    function=applyparentlayer,
+    menu=("<Image>/Layer"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
+    proc_name="python-fu-applygrandparentlayer",
+    blurb="Apply Grandparent Layer (merge all content in grandparent layer down, clear all member layers, but do not remove layers)",
+    help=".",
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Apply _Grandparent"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            ],
+    results=[],
+    function=applygrandparentlayer,
+    menu=("<Image>/Layer"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
 
 
 main()
