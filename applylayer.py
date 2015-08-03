@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 import os
 from gimpfu import *
 
@@ -40,11 +41,14 @@ def applylayer(image, drawable):
     pdb.gimp_image_undo_group_end(image)
 
 def applyparentlayer(image, drawable):
+    pdb.gimp_image_undo_group_start(image)
     if not drawable:
         drawable = image.active_layer
     parent = pdb.gimp_item_get_parent(drawable)
     if parent:
         applylayer(image, parent)
+    image.active_layer = drawable
+    pdb.gimp_image_undo_group_end(image)
 
 def applygrandparentlayer(image, drawable):
     if not drawable:
@@ -52,7 +56,8 @@ def applygrandparentlayer(image, drawable):
     parent = pdb.gimp_item_get_parent(drawable)
     if parent:
         applyparentlayer(image, parent)
-
+    image.active_layer = drawable
+    pdb.gimp_image_undo_group_end(image)
 
 register(
     proc_name="python-fu-applylayer",
