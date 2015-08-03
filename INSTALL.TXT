@@ -1,0 +1,15 @@
+REQUIREMENTS:
+
+This plug-in requires Python-Fu. To verify that Gimp-Python is correctly installed, check the Filters menu for a submenu named 'Python-Fu'.
+
+If this submenu does not show up, you will need to correctly configure Python-Fu.
+Python-Fu comes standard with GIMP 2.8, and should work out-of-the-box for most people.
+
+INSTALLATION:
+
+You can install this plugin by copying it into your GIMP 2.8 plug-ins/ directory, once you have verified Python-Fu is correctly working.
+The plug-in should then be available after restarting GIMP.
+
+* On Linux, the correct directory to install into is usually ~/.gimp-2.8/plug-ins.
+* On Windows, the correct directory to install into is usually %UserProfile%\.gimp-2.8\plug-ins ,
+  which I understand usually amounts to C:\Users\YOURUSERNAME\.gimp-2.8\plug-ins . Note that this is a hidden directory, so you will need to set Explorer to show hidden files.
