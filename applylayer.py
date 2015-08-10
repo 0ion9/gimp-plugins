@@ -22,6 +22,7 @@ def applylayer(image, drawable):
     parent = pdb.gimp_item_get_parent(drawable)
     if parent and len(parent.children) == 1:
         # don't try to merge down when there is no layer below to merge onto.
+        pdb.gimp_message("Won't apply paint from layer %r, no layer below to apply paint to." % drawable.name)
         return
     pdb.gimp_image_undo_group_start(image)
     origindex = pdb.gimp_image_get_item_position(image, drawable)
@@ -57,6 +58,20 @@ def applygrandparentlayer(image, drawable):
     parent = pdb.gimp_item_get_parent(drawable)
     if parent:
         applyparentlayer(image, parent)
+    image.active_layer = drawable
+    pdb.gimp_image_undo_group_end(image)
+
+def wraplayer(image, drawable):
+    pdb.gimp_image_undo_group_start(image)
+    if not drawable:
+        drawable = image.active_layer
+    parent = pdb.gimp_item_get_parent(drawable)
+    origindex = pdb.gimp_image_get_item_position(image, drawable)
+    newname = drawable.name + '+'
+    group = pdb.gimp_layer_group_new(image)
+    pdb.gimp_image_insert_layer(image, group, parent, origindex)
+    group.name = newname
+    pdb.gimp_image_reorder_item(image, drawable, group, 0)
     image.active_layer = drawable
     pdb.gimp_image_undo_group_end(image)
 
@@ -114,6 +129,25 @@ register(
     results=[],
     function=applygrandparentlayer,
     menu=("<Image>/Layer"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
+    proc_name="python-fu-wraplayer",
+    blurb="Wrap a layer with a similarly-named layer group.",
+    help="Wrap a layer with a similarly-named layer group.",
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("_Wrap with new group"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            ],
+    results=[],
+    function=wraplayer,
+    menu=("<Image>/Layer/Stack"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
