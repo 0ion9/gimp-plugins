@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+#
+#
+# XXX 'paste to file and delete' action
+#   ... or maybe instead 'copy to file' (ie put into new image, export. Using the same naming template of course.)
+#          probably with a interactive (input a simple id string for that clip) and noninteractive variant.
+
 
 ## Constants used in configuration (do not modify)
 
@@ -30,8 +36,12 @@ FIFO = -1
 #      type        'RGB', 'Y', or 'I', according to the type of the source drawable
 #      nchildren   The number of children of the drawable, if it is a layer group, otherwise ''
 #      size        Equivalent to {width}x{height}
+#      isize       {source image width}x{source image height}. Note that this refers to the entire image, not the clipping area.
 #      width       Width of the source area (NOT drawable width)
 #      height      Height of the source area (NOT drawable height)
+#      where       Equivalent to [[{isize}+{offsets}]]
+#                  if a 'where' tag is found in the name of a buffer that is being pasted, and the image dimensions match this image,
+#                  the clipping will be pasted at the specified offsets.
 #      offsets     Equivalent to {offsetx},{offsety}
 #      offsetx     X offset of the drawable in the source image
 #      offsety     Y offset of the drawable in the source image
@@ -55,13 +65,19 @@ FIFO = -1
 #
 #
 
-BUFFER_NAME_TEMPLATE = '{basename_layerpath}'
+BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
 
 # MODE should be either LIFO or FIFO.
 # In LIFO mode, the last item you copied is the first to be pasted (the 'queue' empties from the end)
 # In FIFO mode, the first item you copied is the first to be pasted (the 'queue' empties from the start)
 
 MODE = LIFO
+
+# PASTED_NAME_EDITS specifies a list of (python_regexp, replacement) pairs that are applied to the name of a pasted buffer before
+# setting the layer name.
+
+PASTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
+                     (' +$','')]
 
 ## configuration ends ##
 
@@ -221,6 +237,8 @@ def _expand_template(image, drawable, template):
     offsetx, offsety = drawable.offsets
     offsets = '%d,%d' % (offsetx, offsety)
     ismask = 'M' if drawable.is_layer_mask else ''
+    isize = '%dx%d' % (image.width, image.height)
+    where = '[[%s+%s]]' % (isize, offsets)
     data = dict(path=path, 
                 ext=ext,
                 basename=basename,
@@ -235,6 +253,8 @@ def _expand_template(image, drawable, template):
                 type=_type,
                 alpha=alpha,
                 nchildren=nchildren,
+                isize=isize,
+                where=where,
                 width=width,
                 height=height,
                 size=size,
@@ -262,6 +282,7 @@ def _copyn(image, drawable, visible = False):
 
 
 def _pastenandremove(image, drawable, mode, pasteinto):
+    import re
     # ugh, why is drawable usually None????
     if not drawable:
         drawable = image.active_drawable
@@ -277,11 +298,26 @@ def _pastenandremove(image, drawable, mode, pasteinto):
     if not buffers:
         return
     this = buffers[mode]
+    # detect [[IWIDTHxIHEIGHT+OX,OY]]
+    destx, desty = None, None
+    srcinfo = re.findall('\[\[([0-9]+)x([0-9]+)+([0-9]+),([0-9]+)\]\]', this)
+    if srcinfo:
+        _sw, _sh, _sx, _sy = [ int(v) for v in srcinfo[-1]]
+        if _sw == image.width and _sh == image.height:
+            destx = _sx
+            desty = _sy
+    print('original buffer name: %r' % this)
+    final = this
+    for src, repl in PASTED_NAME_EDITS:
+        final = re.sub(src, repl, final)
+    print('final buffer name: %r' % final)
     pdb.gimp_image_undo_group_start(image)
     fsel = pdb.gimp_edit_named_paste(drawable, this, pasteinto)
     pdb.gimp_floating_sel_to_layer(fsel)
     newlayer = image.active_layer
-    pdb.gimp_item_set_name(newlayer, this)
+    if destx is not None:
+        newlayer.set_offsets(destx, desty)
+    pdb.gimp_item_set_name(newlayer, final)
     if parent:
         pdb.gimp_image_reorder_item(image, newlayer, parent, 0)
     pdb.gimp_image_undo_group_end(image)
@@ -327,8 +363,6 @@ register(
     menu=("<Image>/Edit/Buffer"), 
     domain=("gimp20-python", gimp.locale_directory)
     )
-
-# XXX untested
 
 register(
     proc_name="python-fu-copynvauto",
