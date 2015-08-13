@@ -78,6 +78,9 @@ BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
 #    as are spaces -- see EXPORTED_NAME_EDITS below.
 #  * it should include an extension, which will determine the export file type.
 #    .png is recommended, unless you are dealing with truly gigantic clippings.
+#    .webp, .jpg, and .ora are also supported.
+#    Be aware that .jpg doesn't support alpha channel, and .webp plugin currently doesn't handle alpha channel,
+#    so both of these will be flattened during export.
 #
 
 EXPORT_NAME_TEMPLATE = '{layerpath_multiple}.png'
@@ -108,6 +111,9 @@ EXPORTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
                       (' +$',''),
                       ('/+','_'),
                       ('[ !#$^&*()[\]|]+','_')]
+
+EXPORT_WEBP_QUALITY = 92
+EXPORT_JPG_QUALITY = 92
 
 ## configuration ends ##
 
@@ -350,6 +356,24 @@ def _dashjoin(lhs, rhs):
         return rhs
     return '%s-%s' % (lhs.rstrip('-'), rhs.lstrip('-'))
 
+def _export(image, path):
+    _, ext = _splitext(path)
+    ext = ext.lower()
+    params = (image, image.layers[0], path, path)
+    if ext == '.png':
+        pdb.file_png_save_defaults(*params)
+        return True
+    elif ext == '.ora':
+        pdb.file_openraster_save(*params)
+        return True
+    elif ext == '.webp':
+        pdb.file_webp_save(*params, EXPORT_WEBP_QUALITY)
+        return True
+    elif ext in ('.jpg','.jpeg'):
+        pdb.file_jpg_save(*params, EXPORT_JPG_QUALITY / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0)
+        return True
+    return False
+
 def exportn(image, drawable, suffix, visible = False):
     if not drawable:
         drawable = image.active_drawable
@@ -404,10 +428,9 @@ def exportn(image, drawable, suffix, visible = False):
         pdb.gimp_buffer_delete(bname)
         return
     e = ext.lower()
-    if e == '.png':
-        pdb.file_png_save_defaults(newimg, newimg.layers[0], path, path)
-    else:
-        pdb.gimp_message('Formats other than PNG currently not supported!')
+    export_ok = _export(newimg, path)
+    if not export_ok:
+        pdb.gimp_message('%r file format currently not supported!' % e)
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
