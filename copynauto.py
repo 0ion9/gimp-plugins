@@ -29,6 +29,9 @@ FIFO = -1
 #      layerpath   The full path to the source layer within the source file,
 #                  separated by '/'s.
 #                  If the source layer is a layer group, this will end with a '/' character.
+#      layerpath_multiple
+#                  Equivalent to layerpath if the image contains more than one layer, otherwise
+#                  expands to an empty string.
 #      basename_layerpath  
 #                  Equivalent to {basename}:{layerpath} , unless basename exactly matches layerpath.
 #                  In that case, it just expands to the equivalent of {basename}
@@ -67,6 +70,28 @@ FIFO = -1
 
 BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
 
+# EXPORT_NAME_TEMPLATE is just like BUFFER_NAME_TEMPLATE, except for the
+# following :
+#
+#  * characters are more strictly sanitized - all '/'s become '_'s, for example.
+#    By default, shell special characters !#$^&*()[]| are also converted to _'s,
+#    as are spaces -- see EXPORTED_NAME_EDITS below.
+#  * it should include an extension, which will determine the export file type.
+#    .png is recommended, unless you are dealing with truly gigantic clippings.
+#
+
+EXPORT_NAME_TEMPLATE = '{layerpath_multiple}.png'
+
+# Where to place exported clippings.
+# '' or '.' -> current directory.
+# This directory will automatically be created if it doesn't exist.
+#
+# It will usually be a relative path, for example clippings/.
+# Though you can set it to an absolute path if you want all your clippings going to the exact same place.
+#
+
+EXPORT_DIRECTORY = ''
+
 # MODE should be either LIFO or FIFO.
 # In LIFO mode, the last item you copied is the first to be pasted (the 'queue' empties from the end)
 # In FIFO mode, the first item you copied is the first to be pasted (the 'queue' empties from the start)
@@ -78,6 +103,11 @@ MODE = LIFO
 
 PASTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
                      (' +$','')]
+
+EXPORTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
+                      (' +$',''),
+                      ('/+','_'),
+                      ('[ !#$^&*()[\]|]+','_')]
 
 ## configuration ends ##
 
@@ -177,6 +207,9 @@ def _expand_template(image, drawable, template):
       kpixels	  The number of kpixels contained in the buffer, rounded to one decimal place.
       layername   The name of the source layer
       layerpath   The full path to the source layer within the source file.
+      layerpath_multiple
+                  Equivalent to layerpath if the image contains more than one layer, otherwise
+                  expands to an empty string.
       basename_layerpath  
                   Equivalent to {basename}:{layerpath} , unless basename exactly matches layerpath.
                   In that case, it just expands to the equivalent of {basename}
@@ -184,8 +217,12 @@ def _expand_template(image, drawable, template):
       type        'RGB', 'Y', or 'I', according to the type of the source drawable
       nchildren   The number of children of the drawable, if it is a layer group, otherwise ''
       size        Equivalent to {width}x{height}
+      isize       {source image width}x{source image height}. Note that this refers to the entire image, not the clipping area.
       width       Width of the source area (NOT drawable width)
       height      Height of the source area (NOT drawable height)
+      where       Equivalent to [[{isize}+{offsets}]]
+                  if a 'where' tag is found in the name of a buffer that is being pasted, and the image dimensions match this image,
+                  the clipping will be pasted at the specified offsets.
       offsets     Equivalent to {offsetx},{offsety}
       offsetx     X offset of the drawable in the source image
       offsety     Y offset of the drawable in the source image
@@ -239,6 +276,7 @@ def _expand_template(image, drawable, template):
     ismask = 'M' if drawable.is_layer_mask else ''
     isize = '%dx%d' % (image.width, image.height)
     where = '[[%s+%s]]' % (isize, offsets)
+    layerpath_multiple = '' if len(image.layers) == 1 else layerpath
     data = dict(path=path, 
                 ext=ext,
                 basename=basename,
@@ -261,13 +299,20 @@ def _expand_template(image, drawable, template):
                 offsets=offsets,
                 offsetx=offsetx,
                 offsety=offsety,
-                ismask=ismask)
+                ismask=ismask,
+                layerpath_multiple=layerpath_multiple)
     newtemplate = _subst_preprocess(template, data)
     try:
          return newtemplate.format(**data)
     except error:
          return 'Error expanding %r. Template may be invalid.'
 
+def _apply_regexp_substitutions(s, replacements):
+    import re
+    final = s
+    for src, repl in replacements:
+        final = re.sub(src, repl, final)
+    return final
 
 def _copyn(image, drawable, visible = False):
     # ugh, why is drawable usually None????
@@ -280,6 +325,91 @@ def _copyn(image, drawable, visible = False):
     else:
         pdb.gimp_edit_named_copy(drawable, used)
 
+def _numbered_filename(path, digits=2):
+    from itertools import count
+    if digits < 1 or digits > 100:
+        raise ValueError('Invalid number of digits %r' % digits)
+    format = '%0' + str(digits) + 'd'
+    if not os.path.exists(path):
+        return path
+    base, ext = _splitext(path)
+    for i in count(1):
+        # arbitrary bailout at 16M items, to prevent looping forever (count is an infinite iterator)
+        if i >= 0xffffff:
+            raise ValueError('Reached bailout at %d without finding a free filename' % i)
+        thistry = base + (format % i) + ext
+        if not os.path.exists(thistry):
+            return thistry
+    raise ValueError('You should never reach this line')
+
+
+def _dashjoin(lhs, rhs):
+    if not rhs:
+        return lhs
+    if not lhs:
+        return rhs
+    return '%s-%s' % (lhs.rstrip('-'), rhs.lstrip('-'))
+
+def exportn(image, drawable, suffix, visible = False):
+    if not drawable:
+        drawable = image.active_drawable
+    if not image.filename:
+        pdb.gimp_message('Image must be saved on disk before exporting clippings.')
+        return
+    dest = _expand_template(image, drawable, EXPORT_NAME_TEMPLATE)
+    dest = _apply_regexp_substitutions(dest, EXPORTED_NAME_EDITS)
+    if visible:
+        bname = pdb.gimp_edit_named_copy_visible(image, '_' + dest)
+    else:
+        bname = pdb.gimp_edit_named_copy(drawable, '_' + dest)
+    # paste as new image (This doesn't automatically create a view, thankfully)
+    newimg = pdb.gimp_edit_named_paste_as_new(bname)
+    # XXX perform extra processing -- border or flattening
+    #
+    # The following code puts parts together as follows:
+    #     $EXPORTDIR/$FNAME-$DEST-$SUFFIX$EXT
+    #
+    # to determine the final export path.
+    #
+    suffix = _expand_template(image, drawable, suffix)
+    suffix = _apply_regexp_substitutions(suffix, EXPORTED_NAME_EDITS)
+    destbase, ext = _splitext(dest)
+    if destbase.startswith('.'):
+        # when dest is eg '.png', because for example layerpath_multiple expands to '' since there is only one layer,
+        # this can happen
+        #
+        # XXX note that this will probably also pick up a normal name that starts with '.', like '.foobar.png'.
+        # so don't use names starting with . for now.
+        ext = destbase
+        destbase = ''
+    fnamebase = os.path.splitext(image.filename)[0]
+    if not os.path.isabs(EXPORT_DIRECTORY):
+        basedir = os.path.join(EXPORT_DIRECTORY, os.path.dirname(fnamebase))
+    else:
+        basedir = EXPORT_DIRECTORY
+    path = os.path.join(basedir, _dashjoin(fnamebase, destbase))
+    if suffix:
+        path = _dashjoin(path, suffix)
+    path = path + ext
+    pathdir = os.path.dirname(path)
+    if not os.path.exists(pathdir):
+        os.makedirs(pathdir)
+    # get a filename that doesn't already exist on disk
+    path = _numbered_filename(path)
+    if os.path.exists(path):
+        # now we're using _numbered_filename, this branch should only be entered if there is a race condition
+        # (the output file didn't exist when _numbered_filename() ran, but has been created in the meantime)
+        pdb.gimp_message('Won\'t overwrite existing image %s' % path)
+        pdb.gimp_image_delete(newimg)
+        pdb.gimp_buffer_delete(bname)
+        return
+    e = ext.lower()
+    if e == '.png':
+        pdb.file_png_save_defaults(newimg, newimg.layers[0], path, path)
+    else:
+        pdb.gimp_message('Formats other than PNG currently not supported!')
+    pdb.gimp_image_delete(newimg)
+    pdb.gimp_buffer_delete(bname)
 
 def _pastenandremove(image, drawable, mode, pasteinto):
     import re
@@ -307,9 +437,7 @@ def _pastenandremove(image, drawable, mode, pasteinto):
             destx = _sx
             desty = _sy
     print('original buffer name: %r' % this)
-    final = this
-    for src, repl in PASTED_NAME_EDITS:
-        final = re.sub(src, repl, final)
+    final = _apply_regexp_substitutions(this, PASTED_NAME_EDITS)
     print('final buffer name: %r' % final)
     pdb.gimp_image_undo_group_start(image)
     fsel = pdb.gimp_edit_named_paste(drawable, this, pasteinto)
@@ -420,6 +548,27 @@ register(
     results=[],
     function=pastenallandremove,
     menu=("<Image>/Edit/Buffer"), 
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
+    proc_name="python-fu-exportclipping",
+    blurb="Export current selection to file",
+    help=(""),
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Export _Clipping"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            (PF_STRING, "suffix", "_Suffix", ''),
+            (PF_BOOL, "visible", "_Visible", False)
+            ],
+    results=[],
+    function=exportn,
+    menu=("<Image>/Edit"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
