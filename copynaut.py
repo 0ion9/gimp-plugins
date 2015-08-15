@@ -213,6 +213,9 @@ def _serialize_regex_repl(tup):
     return schr + schr.join([regex, repl, flagchrs])
 
 
+def _getconfigpath():
+    return os.path.join(gimp.directory, 'copynaut', 'config.ini')
+
 def _load_config(extra_search_path):
     global _config_cache
     if _config_cache is not None:
@@ -223,7 +226,7 @@ def _load_config(extra_search_path):
     from StringIO import StringIO
     parser = RawConfigParser()
     parser.readfp(StringIO(_DEFAULT_CONFIG))
-    parser.read((os.path.join(gimp.directory, 'copynaut', 'config.ini'),))
+    parser.read((_getconfigpath(),))
 
     c = parser
     cstack = lambda k: c.get('clipping stack', k)
@@ -258,11 +261,15 @@ def _load_config(extra_search_path):
     return _config_cache
 
 def _save_config(cfg, filename):
+    from ConfigParser import RawConfigParser
     c = RawConfigParser()
+    for v in ('clipping stack', 'clipping name edits',
+              'export', 'export name edits'):
+        c.add_section(v)
     cstack = lambda k,v: c.set('clipping stack', k, v)
     cexport = lambda k,v: c.set('export', k, v)
-    for k, v in (('webp quality', cfg.export.webp_args),
-                 ('jpeg quality', int(cfg.export.jpeg_args * 100)),
+    for k, v in (('webp quality', cfg.export.webp_args[0]),
+                 ('jpeg quality', int(cfg.export.jpeg_args[0] * 100)),
                  ('name template', cfg.export.name_template),
                  ('directory', cfg.export.directory)):
         c.set('export', k, v)
@@ -276,8 +283,12 @@ def _save_config(cfg, filename):
 
     for k, v in cfg.stack.name_edits:
         c.set('clipping name edits', k, _serialize_regex_repl(v))
-
-    c.write(filename)
+    try:
+        os.makedirs(os.path.dirname(filename))
+    except OSError:
+        pass
+    with open(filename, 'wt') as f:
+        c.write(f)
 
 def _escape(layername):
     return layername.replace('/','\\/')
@@ -630,6 +641,16 @@ def pastenallandremove(image, drawable):
         _pastenandremove(image, drawable, conf.stack.read_index, 0)
     pdb.gimp_image_undo_group_end(image)
 
+def configure(stacktemplate, exporttemplate, directory):
+    conf = _load_config('')
+    stackc = StackConfig(conf.stack.read_index, stacktemplate, conf.stack.name_edits)
+    if directory is None:
+        directory = ''
+    exportc = ExportConfig(exporttemplate, conf.export.name_edits, directory, conf.export.webp_args, conf.export.jpeg_args)
+    newconf = Config(stackc, exportc)
+    _save_config(newconf, _getconfigpath())
+
+
 import sys
 
 pluginfilename = os.path.basename(sys.argv[0])
@@ -730,6 +751,30 @@ register(
             ],
     results=[],
     function=exportn,
+    menu=("<Image>/Edit"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+
+# XXX whoa hack hack hack
+
+_conf = _load_config('')
+register(
+    proc_name="python-fu-configure-copynaut",
+    blurb="Set configuration parameters for copynaut",
+    help=(""),
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Configure Copynaut"),
+    imagetypes=(""),
+    params=[
+            (PF_STRING, "stacktemplate", "Clipping Stack Name Template", _conf.stack.name_template),
+            (PF_STRING, "exporttemplate", "Export Name Template", _conf.export.name_template),
+            (PF_DIRNAME, "directory", "Export directory", _conf.export.directory),
+            ],
+    results=[],
+    function=configure,
     menu=("<Image>/Edit"),
     domain=("gimp20-python", gimp.locale_directory)
     )
