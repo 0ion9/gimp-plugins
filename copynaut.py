@@ -32,7 +32,7 @@ FIFO = -1
 #      layerpath_multiple
 #                  Equivalent to layerpath if the image contains more than one layer, otherwise
 #                  expands to an empty string.
-#      basename_layerpath  
+#      basename_layerpath
 #                  Equivalent to {basename}:{layerpath} , unless basename exactly matches layerpath.
 #                  In that case, it just expands to the equivalent of {basename}
 #      alpha       'A' if the source drawable has an alpha channel, 'A*' if it has a layer mask, '' otherwise
@@ -57,8 +57,8 @@ FIFO = -1
 # (basename, ext, path, realpath, mpixels, kpixels, layername, layerpath, basename_layerpath, alpha, type,
 #  size, offsets, ismask).
 #
-# Substitution formatting looks like '{basename_layerpath/pattern/replacement}', and is equivalent to 
-# basename_layerpath.replace('pattern', 'replacement') in Python terms. 
+# Substitution formatting looks like '{basename_layerpath/pattern/replacement}', and is equivalent to
+# basename_layerpath.replace('pattern', 'replacement') in Python terms.
 # Any literal forward slashes ('/') in pattern or replacement must be escaped using /'.
 #
 # Multiple substitutions may be performed like this: {basename_layerpath/p1/r1/p2/r2/p3/r3}
@@ -121,18 +121,44 @@ EXPORT_JPG_QUALITY = 92
 
 ## configuration ends ##
 
-
-
 import os
+import re
 from gimpfu import *
+from collections import namedtuple
+
+# XXX name edits are not handled via config-file yet
+Config = namedtuple('Config', 'stack export')
+StackConfig = namedtuple('StackConfig', 'read_index name_template name_edits')
+ExportConfig = namedtuple('ExportConfig', 'name_template name_edits directory webp_args jpeg_args')
+
+_DEFAULT_CONFIG = """
+[clipping stack]
+mode = last-in-first-out
+name template = {basename_layerpath} {where}
+[clipping name edits]
+00_remove_doublebracketed_expressions = ;\[\[(.+)\]\];
+01_remove_trailing_spaces = / +$/
+[export]
+name template = {layerpath_multiple}.png
+directory =
+webp quality = 92
+jpeg quality = 92
+[export name edits]
+00_remove_doublebracketed_expressions = /\[\[(.+)\]\]/
+01_remove_trailing_spaces = / +$/
+02_slashes_to_underscore = ;/+;_
+03_shellcharacters_to_underscore = ,[ !#$^&*;()[\]|]+,_
+"""
+
+_config_cache = None
 
 gettext.install("gimp20-python", gimp.locale_directory, unicode=True)
 
 def _splitext(path):
     """os.path.splitext variant that detects single-file-compressor extensions.
     (eg. foo.tar.(gz|bz2|bzip2|xz))
-    
-    os.path.splitext('foo.tar.gz') returns ('foo.tar', '.gz'), whereas 
+
+    os.path.splitext('foo.tar.gz') returns ('foo.tar', '.gz'), whereas
     splitext returns ('foo', '.tar.gz')
     """
     directory, basename = os.path.split(path)
@@ -150,37 +176,110 @@ def _item_get_hierarchy(item):
         if parent:
             h.insert(0, parent)
     return h
-    
+
+def _split_regex_replacement(expression):
+    """Split a regex-replacement expression into a (regexp, repl, flags) tuple
+
+    Format is based on sed syntax:
+
+    <SEPARATOR>regexp<SEPARATOR>repl[SEPARATOR[flags]]
+
+    SEPARATOR being a single character; If it occurs in regexp, repl,
+    or flags, it should be escaped with '\'
+
+    flags include AILMSXU , as described in the 're' module's documentation,
+    and also 'G' (which is a no-op, included for sed compatibility).
+    They are case-insensitive.
+    """
+    sep = re.escape(expression[0])
+    if sep == '\\':
+        raise ValueError('Separator cannot be \\')
+    parts = re.split(r'(?<!\\)%s' % sep, expression[1:])
+    if len(parts) < 2:
+        raise ValueError('Replacement string missing in %r' % expression)
+    elif len(parts) > 3:
+        raise ValueError('Replacement spec %r not understood')
+    regex, replacement = parts[0], parts[1]
+    flags = 0
+    if len(parts) == 3:
+        for flag in parts[-1]:
+            flag = flag.upper()
+            # basic sed compatibility
+            if flag == 'G':
+                continue
+            try:
+                flags |= getattr(re, flag)
+            except AttributeError:
+                raise ValueError('Unknown regexp flag %r' % flag)
+    return (regex, replacement, flags)
+
+# XXX we don't parse regexp replacements from config file yet, still using internal constants.
+# XXX we ignore extra_search_path for now.. Might look in same directory
+#     as source file, for config file, in the future.
+
+def _load_config(extra_search_path):
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
+    # python2 uses 'ConfigParser' module name
+    # and has no read_string method
+    from ConfigParser import RawConfigParser
+    from StringIO import StringIO
+    parser = RawConfigParser()
+    parser.readfp(StringIO(_DEFAULT_CONFIG))
+    parser.read((os.path.join(gimp.directory, 'copynaut', 'config.ini'),))
+
+    c = parser
+    cstack = lambda k: c.get('clipping stack', k)
+    cexport = lambda k: c.get('export', k)
+    s_mode = cstack('mode').lower()
+    read_index = None
+    if s_mode in ('last-in-first-out', 'lifo'):
+        read_index = 0
+    elif s_mode in ('first-in-first-out', 'fifo'):
+        read_index = -1
+    else:
+        raise ValueError('Unknown value for clipping stack mode: %r' % s_mode)
+    s_template = cstack('name template')
+    e_template = cexport('name template')
+    e_directory = os.path.expanduser(cexport('directory'))
+    e_webp_args = (int(cexport('webp quality')), )
+    e_jpeg_args = (float(cexport('jpeg quality')) / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0 )
+    stackc = StackConfig(read_index, s_template, PASTED_NAME_EDITS)
+    exportc = ExportConfig(e_template, EXPORTED_NAME_EDITS, e_directory, e_webp_args, e_jpeg_args)
+    data = Config(stackc, exportc)
+    _config_cache = data
+    return _config_cache
 
 def _escape(layername):
     return layername.replace('/','\\/')
 
 def _get_layer_path(item):
     """Return a 'layer path' for the given GimpItem.
-    
+
     Layer paths describe the hierarchy within which a layer resides, in the same way as
     /home/me/myfiles/picture.jpg describes the hierarchy within which picture.jpg resides on your hard drive.
-    
+
     Slashes in layer names are escaped -- a literal '/' becomes '\/'.
-    
+
     The returned path looks like 'LayerGroup/SubGroup/LayerName'
-    
+
     If the given item is a layer group, the returned path will end with /.
     """
     tmp = '/'.join([_escape(v.name) for v in _item_get_hierarchy(item)])
     if pdb.gimp_item_is_group(item):
         tmp = tmp + '/'
     return tmp
-    
+
 
 def _subst_preprocess(format_str, data):
     """Applies replacements specified in format_str to keys in data.
-    
+
     Returns new format string (with non-standard replacement specifiers removed).
-    
+
     Format:
      {SPEC/str/repl[/str/repl...]}
-    
+
     Literal /'s and }'s must be escaped using \.
     """
     replacements = []
@@ -205,9 +304,9 @@ def _subst_preprocess(format_str, data):
 def _expand_template(image, drawable, template):
     """Expand the string template, returning the semi-final name of the buffer
     (*semi*-final because GIMP may still generate a #n suffix if multiple of the name occurs)
-    
+
     Templates may use the following keys:
-    
+
       basename    The basename of the file, excluding the extension
       ext         The extension of the file, including '.'
                   Includes special handling so that double-extensions like foo.xcf.bz2 are handled correctly
@@ -220,7 +319,7 @@ def _expand_template(image, drawable, template):
       layerpath_multiple
                   Equivalent to layerpath if the image contains more than one layer, otherwise
                   expands to an empty string.
-      basename_layerpath  
+      basename_layerpath
                   Equivalent to {basename}:{layerpath} , unless basename exactly matches layerpath.
                   In that case, it just expands to the equivalent of {basename}
       alpha       'A' if the source drawable has an alpha channel, 'A*' if it has a layer mask, '' otherwise
@@ -238,7 +337,7 @@ def _expand_template(image, drawable, template):
       offsety     Y offset of the drawable in the source image
       ismask      'M' if the source drawable is a layer mask
 
-    
+
     """
     filename = image.filename or '<none>'
     _basename = os.path.basename(filename)
@@ -259,7 +358,7 @@ def _expand_template(image, drawable, template):
          basename_layerpath = basename + ':' + layerpath
     else:
          basename_layerpath = basename
-    
+
     alpha = 'A' if drawable.has_alpha else ''
     if drawable.mask:
         alpha += '*'
@@ -287,7 +386,7 @@ def _expand_template(image, drawable, template):
     isize = '%dx%d' % (image.width, image.height)
     where = '[[%s+%s]]' % (isize, offsets)
     layerpath_multiple = '' if len(image.layers) == 1 else layerpath
-    data = dict(path=path, 
+    data = dict(path=path,
                 ext=ext,
                 basename=basename,
                 realpath=_splitext(os.path.realpath(filename))[0],
@@ -328,7 +427,8 @@ def _copyn(image, drawable, visible = False):
     # ugh, why is drawable usually None????
     if not drawable:
         drawable = image.active_drawable
-    used = _expand_template(image, drawable, BUFFER_NAME_TEMPLATE)
+    conf = _load_config(image.filename)
+    used = _expand_template(image, drawable, conf.stack.name_template)# BUFFER_NAME_TEMPLATE)
     print('I,D:', image, drawable)
     if visible:
         pdb.gimp_edit_named_copy_visible(image, used)
@@ -364,6 +464,7 @@ def _export(image, path):
     _, ext = _splitext(path)
     ext = ext.lower()
     params = (image, image.layers[0], path, path)
+    conf = _load_config(image.filename)
     if ext == '.png':
         pdb.file_png_save_defaults(*params)
         return True
@@ -371,11 +472,11 @@ def _export(image, path):
         pdb.file_openraster_save(*params)
         return True
     elif ext == '.webp':
-        params = params + ( EXPORT_WEBP_QUALITY, )
+        params = params + conf.export.webp_args
         pdb.file_webp_save(*params)
         return True
     elif ext in ('.jpg','.jpeg'):
-        params = params + (EXPORT_JPG_QUALITY / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0)
+        params = params + + conf.export.jpeg_args
         pdb.file_jpeg_save(*params)
         return True
     return False
@@ -386,8 +487,9 @@ def exportn(image, drawable, suffix, visible = False):
     if not image.filename:
         pdb.gimp_message('Image must be saved on disk before exporting clippings.')
         return
-    dest = _expand_template(image, drawable, EXPORT_NAME_TEMPLATE)
-    dest = _apply_regexp_substitutions(dest, EXPORTED_NAME_EDITS)
+    conf = _load_config(image.filename)
+    dest = _expand_template(image, drawable, conf.export.name_template)#EXPORT_NAME_TEMPLATE)
+    dest = _apply_regexp_substitutions(dest, conf.export.name_edits)#EXPORTED_NAME_EDITS)
     if visible:
         bname = pdb.gimp_edit_named_copy_visible(image, '_' + dest)
     else:
@@ -402,7 +504,7 @@ def exportn(image, drawable, suffix, visible = False):
     # to determine the final export path.
     #
     suffix = _expand_template(image, drawable, suffix)
-    suffix = _apply_regexp_substitutions(suffix, EXPORTED_NAME_EDITS)
+    suffix = _apply_regexp_substitutions(suffix, conf.export.name_edits)
     destbase, ext = _splitext(dest)
     if destbase.startswith('.'):
         # when dest is eg '.png', because for example layerpath_multiple expands to '' since there is only one layer,
@@ -414,9 +516,9 @@ def exportn(image, drawable, suffix, visible = False):
         destbase = ''
     fnamebase = os.path.splitext(image.filename)[0]
     if not os.path.isabs(EXPORT_DIRECTORY):
-        basedir = os.path.join(EXPORT_DIRECTORY, os.path.dirname(fnamebase))
+        basedir = os.path.join(conf.export.directory, os.path.dirname(fnamebase))
     else:
-        basedir = EXPORT_DIRECTORY
+        basedir = conf.export.directory
     path = os.path.join(basedir, _dashjoin(fnamebase, destbase))
     if suffix:
         path = _dashjoin(path, suffix)
@@ -440,12 +542,12 @@ def exportn(image, drawable, suffix, visible = False):
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
-def _pastenandremove(image, drawable, mode, pasteinto):
+def _pastenandremove(image, drawable, read_index, pasteinto):
     import re
     # ugh, why is drawable usually None????
     if not drawable:
         drawable = image.active_drawable
-
+    conf = _load_config(image.filename)
     pasteinto = 1 if pasteinto else 0
     # if this is a layer group, pick an arbitrary layer to paste 'onto', we reorder later anyway
     if pdb.gimp_item_is_group(drawable):
@@ -456,7 +558,7 @@ def _pastenandremove(image, drawable, mode, pasteinto):
     _, buffers = pdb.gimp_buffers_get_list('')
     if not buffers:
         return
-    this = buffers[mode]
+    this = buffers[read_index]
     # detect [[IWIDTHxIHEIGHT+OX,OY]]
     destx, desty = None, None
     srcinfo = re.findall('\[\[([0-9]+)x([0-9]+)+([0-9]+),([0-9]+)\]\]', this)
@@ -466,7 +568,7 @@ def _pastenandremove(image, drawable, mode, pasteinto):
             destx = _sx
             desty = _sy
     print('original buffer name: %r' % this)
-    final = _apply_regexp_substitutions(this, PASTED_NAME_EDITS)
+    final = _apply_regexp_substitutions(this, conf.stack.name_edits)
     print('final buffer name: %r' % final)
     pdb.gimp_image_undo_group_start(image)
     fsel = pdb.gimp_edit_named_paste(drawable, this, pasteinto)
@@ -483,18 +585,20 @@ def _pastenandremove(image, drawable, mode, pasteinto):
 
 def copynauto(image, drawable):
     _copyn(image, drawable)
-    
+
 def copynvauto(image, drawable):
     _copyn(image, drawable, True)
 
 def pastenandremove(image, drawable):
-    _pastenandremove(image, drawable, MODE, 0)
+    conf = _load_config(image.filename)
+    _pastenandremove(image, drawable, conf.stack.read_index, 0)
 
 def pastenallandremove(image, drawable):
     _, buffers = pdb.gimp_buffers_get_list('')
+    conf = _load_config(image.filename)
     pdb.gimp_image_undo_group_start(image)
     for i, _ in enumerate(buffers):
-        _pastenandremove(image, drawable, MODE, 0)
+        _pastenandremove(image, drawable, conf.stack.read_index, 0)
     pdb.gimp_image_undo_group_end(image)
 
 import sys
@@ -517,7 +621,7 @@ register(
             ],
     results=[],
     function=copynauto,
-    menu=("<Image>/Edit/Buffer"), 
+    menu=("<Image>/Edit/Buffer"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
@@ -536,7 +640,7 @@ register(
             ],
     results=[],
     function=copynvauto,
-    menu=("<Image>/Edit/Buffer"), 
+    menu=("<Image>/Edit/Buffer"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
@@ -555,7 +659,7 @@ register(
             ],
     results=[],
     function=pastenandremove,
-    menu=("<Image>/Edit/Buffer"), 
+    menu=("<Image>/Edit/Buffer"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
@@ -576,7 +680,7 @@ register(
             ],
     results=[],
     function=pastenallandremove,
-    menu=("<Image>/Edit/Buffer"), 
+    menu=("<Image>/Edit/Buffer"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
