@@ -528,7 +528,7 @@ def _apply_regexp_substitutions(s, replacements):
         final = re.sub(src, repl, final, flags=flags)
     return final
 
-def _copyn(image, drawable, visible = False):
+def _copyn(image, drawable, visible=False):
     # ugh, why is drawable usually None????
     if not drawable:
         drawable = image.active_drawable
@@ -586,7 +586,7 @@ def _export(image, path):
         return True
     return False
 
-def exportn(image, drawable, suffix, visible = False):
+def exportn(image, drawable, suffix, visible=False):
     if not drawable:
         drawable = image.active_drawable
     if not image.filename:
@@ -646,6 +646,16 @@ def exportn(image, drawable, suffix, visible = False):
         pdb.gimp_message('%r file format currently not supported!' % e)
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
+
+def exportfromvectors(image, drawable, visible):
+    pdb.gimp_image_undo_group_start(image)
+    vectors = image.vectors
+    # process vectors bottom-to-top
+    for v in reversed(vectors):
+        name = v.name
+        pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, v)
+        exportn(image, drawable, name, visible)
+    pdb.gimp_image_undo_group_end(image)
 
 def _pastenandremove(image, drawable, read_index, pasteinto):
     import re
@@ -812,13 +822,35 @@ register(
             (PF_IMAGE, "image", "image", None),
             (PF_LAYER, "drawable", "drawable", None),
             (PF_STRING, "suffix", "_Suffix", ''),
-            (PF_BOOL, "visible", "_Visible", False)
+            (PF_BOOL, "visible", "Copy _Visible", False)
             ],
     results=[],
     function=exportn,
     menu=("<Image>/Edit"),
     domain=("gimp20-python", gimp.locale_directory)
     )
+
+register(
+    proc_name="python-fu-export-clippings-from-vectors",
+    blurb="Export sections of the image/drawable defined and named by vectors to file",
+    help=("Each vectors object (path) has a name and a shape. The shape is converted to a selection,"
+    " and python-fu-exportclipping is called with the suffix equalling that vector's name."),
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Export Clippings from _Vectors"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            (PF_BOOL, "visible", "Copy _Visible", False)
+            ],
+    results=[],
+    function=exportfromvectors,
+    menu=("<Image>/Edit"),# might go in <Vectors>?
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
 
 
 # XXX whoa hack hack hack
