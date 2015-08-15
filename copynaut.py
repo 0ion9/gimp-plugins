@@ -3,93 +3,6 @@
 
 ## Configuration ##
 
-# BUFFER_NAME_TEMPLATE determines the naming of the named-buffers created.
-#
-# The following variable expansions can be used
-# (info is taken from the _expand_template docstring below):
-#
-#      basename    The basename of the file, excluding the extension
-#      ext         The extension of the file, including '.'
-#                  Includes special handling so that double-extensions like foo.xcf.bz2 are handled correctly
-#      path        The full path to the file, excluding extension.
-#      realpath    The full path to the file, excluding extension, with all symlinks resolved.
-#      mpixels     The number of mpixels contained in the buffer, rounded to one decimal place.
-#      kpixels     The number of kpixels contained in the buffer, rounded to one decimal place.
-#      layername   The name of the source layer
-#      layerpath   The full path to the source layer within the source file,
-#                  separated by '/'s.
-#                  If the source layer is a layer group, this will end with a '/' character.
-#      layerpath_multiple
-#                  Equivalent to layerpath if the image contains more than one layer, otherwise
-#                  expands to an empty string.
-#      basename_layerpath
-#                  Equivalent to {basename}:{layerpath} , unless basename exactly matches layerpath.
-#                  In that case, it just expands to the equivalent of {basename}
-#      alpha       'A' if the source drawable has an alpha channel, 'A*' if it has a layer mask, '' otherwise
-#      type        'RGB', 'Y', or 'I', according to the type of the source drawable
-#      nchildren   The number of children of the drawable, if it is a layer group, otherwise ''
-#      size        Equivalent to {width}x{height}
-#      isize       {source image width}x{source image height}. Note that this refers to the entire image, not the clipping area.
-#      width       Width of the source area (NOT drawable width)
-#      height      Height of the source area (NOT drawable height)
-#      where       Equivalent to [[{isize}+{offsets}]]
-#                  if a 'where' tag is found in the name of a buffer that is being pasted, and the image dimensions match this image,
-#                  the clipping will be pasted at the specified offsets.
-#      offsets     Equivalent to {offsetx},{offsety}
-#      offsetx     X offset of the drawable in the source image
-#      offsety     Y offset of the drawable in the source image
-#      ismask      'M' if the source drawable is a layer mask
-#
-# It is expanded using the standard Python str.format() template, so all str.format() formatting codes are supported.
-# It should be noted however that mpixels and kpixels are strings, not floats, so requesting further precision will not work.
-#
-# Additionally, substitution formatting is supported for string-type variables
-# (basename, ext, path, realpath, mpixels, kpixels, layername, layerpath, basename_layerpath, alpha, type,
-#  size, offsets, ismask).
-#
-# Substitution formatting looks like '{basename_layerpath/pattern/replacement}', and is equivalent to
-# basename_layerpath.replace('pattern', 'replacement') in Python terms.
-# Any literal forward slashes ('/') in pattern or replacement must be escaped using /'.
-#
-# Multiple substitutions may be performed like this: {basename_layerpath/p1/r1/p2/r2/p3/r3}
-#
-# Note that substitutions are performed left-to-right as they are found. This means, for example, that given basename = 'foobar',
-# '{basename/foo/o/o/bar}' results in an output 'barbar' (foobar -> obar -> barbar)
-#
-#
-
-# EXPORT_NAME_TEMPLATE is just like BUFFER_NAME_TEMPLATE, except for the
-# following :
-#
-#  * characters are more strictly sanitized - all '/'s become '_'s, for example.
-#    By default, shell special characters !#$^&*()[]| are also converted to _'s,
-#    as are spaces -- see EXPORTED_NAME_EDITS below.
-#  * it should include an extension, which will determine the export file type.
-#    .png is recommended, unless you are dealing with truly gigantic clippings.
-#    .webp, .jpg, and .ora are also supported.
-#    Be aware that .jpg doesn't support alpha channel; areas that weren't included in your clipping, but within its bounding box,
-#    will show up (since their color is preserved and the alpha is ignored.)
-#
-#    .webp is currently not recommended as the webp plugin ignores run-mode, which forces you to interact with its dialog every time you do an export.
-#    If you use a version of gimp-webp plugin newer than August 14 2015, this bug is fixed (see https://github.com/nathan-osman/gimp-webp/issues/1)
-#
-#
-
-# EXPORT_DIRECTORY:
-# Where to place exported clippings.
-# '' or '.' -> current directory.
-# This directory will automatically be created if it doesn't exist.
-#
-# It will usually be a relative path, for example clippings/.
-# Though you can set it to an absolute path if you want all your clippings going to the exact same place.
-#
-
-# MODE should be either LIFO or FIFO.
-# In LIFO mode, the last item you copied is the first to be pasted (the 'queue' empties from the end)
-# In FIFO mode, the first item you copied is the first to be pasted (the 'queue' empties from the start)
-
-# PASTED_NAME_EDITS specifies a list of (python_regexp, replacement) pairs that are applied to the name of a pasted buffer before
-# setting the layer name.
 
 ## configuration ends ##
 
@@ -261,6 +174,164 @@ def _load_config(extra_search_path):
     return _config_cache
 
 def _save_config(cfg, filename):
+    DOCS = """# CONFIGURATION
+#
+# [clipping stack] section:
+#
+# 'name template' determines the naming of the named-buffers created.
+#
+# The following variable expansions can be used
+#
+#      basename    The basename of the file, excluding the extension
+#      ext         The extension of the file, including '.'
+#                  Includes special handling so that double-extensions,
+#                  like foo.xcf.bz2, are handled correctly
+#      path        The full path to the file, excluding extension.
+#      realpath    The full path to the file, excluding extension, with all symlinks resolved.
+#      mpixels     The number of mpixels contained in the buffer, rounded to one decimal place.
+#      kpixels     The number of kpixels contained in the buffer, rounded to one decimal place.
+#      layername   The name of the source layer
+#      layerpath   The full path to the source layer within the source file,
+#                  separated by '/'s.
+#                  If the source layer is a layer group, this will end with a '/' character.
+#      layerpath_multiple
+#                  Equivalent to layerpath if the image contains more than one layer, otherwise
+#                  expands to an empty string.
+#      basename_layerpath
+#                  Equivalent to {basename}:{layerpath} , unless basename
+#                  exactly matches layerpath.
+#                  In that case, it just expands to the equivalent of {basename}
+#      alpha       'A' if the source drawable has an alpha channel, 'A*' if it
+#                  has a layer mask, '' otherwise
+#      type        'RGB', 'Y', or 'I', according to the type of the source drawable
+#      nchildren   The number of children of the drawable, if it is a layer
+#                  group, otherwise ''
+#      size        Equivalent to {width}x{height}
+#      isize       {source image width}x{source image height}. Note that this
+#                  refers to the entire image, not the clipping area.
+#      width       Width of the source area (NOT drawable width)
+#      height      Height of the source area (NOT drawable height)
+#      where       Equivalent to [[{isize}+{offsets}]]
+#                  if a 'where' tag is found in the name of a buffer that is
+#                  being pasted, and the image dimensions match this image,
+#                  the clipping will be pasted at the specified offsets.
+#      offsets     Equivalent to {offsetx},{offsety}
+#      offsetx     X offset of the drawable in the source image
+#      offsety     Y offset of the drawable in the source image
+#      ismask      'M' if the source drawable is a layer mask
+#
+#   It is expanded using the standard Python str.format() template, so all
+#   str.format() formatting codes are supported.
+#   It should be noted however that mpixels and kpixels are strings, not floats,
+#   so requesting further precision will not work.
+#
+#   Additionally, substitution formatting is supported for string-type variables
+#   (every variable except nchildren, width, height, offsetx, offsety)
+#
+#   Substitution formatting looks like '{basename_layerpath/pattern/replacement}',
+#   and is equivalent to basename_layerpath.replace('pattern', 'replacement')
+#   in Python terms.
+#   Any literal forward slashes ('/') in pattern or replacement must be escaped using /'.
+#
+#   Multiple substitutions may be performed like this:
+#    {basename_layerpath/p1/r1/p2/r2/p3/r3}
+#
+#   Note that substitutions are performed left-to-right as they are found.
+#   This means, for example, that given basename = 'foobar',
+#   '{basename/foo/o/o/bar}' results in an output 'barbar'
+#   (foobar -> obar -> barbar)
+#
+#
+# 'mode' may be either 'last-in-first-out'
+#   (the last clipping you put on the stack is the first one to come out)
+# or 'first-in-first-out'
+#   (the first clipping you put on the stack is the first one to come out)
+#
+#
+##
+# [clipping name edits] section
+#
+# All key = value pairs in this section are interpreted as regexp replacements
+# to apply to the clipping name after expanding the 'name template'
+# The key should describe the effect of the replacement, with the value
+# defining the replacement as specified below.
+# They are sorted by key before applying. For example the substitution described
+# as '00_foo' will always be applied before '01_bar'.
+#
+# regexp replacement specification:
+#
+#   A regexp replacement is formatted similarly to sed's 's' scripting command.
+#   The first character must be a 'separator' character, ideally one that does
+#   not occur in the expression or replacement.
+#   Following that comes the expression to search for,
+#   followed by the separator character, followed by the replacement.
+#   This may optionally be followed by the separator character and certain
+#   single-letter flags effecting how the replacement is done:
+#       I  IGNORECASE  Perform case-insensitive matching.
+#       L  LOCALE      Make \w, \W, \\b, \B, dependent on the current locale.
+#       U  UNICODE     Make \w, \W, \\b, \B, dependent on the Unicode locale.
+#
+#   A few examples:
+#
+#     # replace foo with bar
+#     10_foobarize = ,foo,bar
+#
+#     # replace #[number] with '' (ie. delete it)
+#     11_nonumbering = ,#[0-9]+,
+#
+##
+# [export] section
+#
+# 'name template' is like [clipping stack]'s 'name template',
+# except for the following :
+#
+#  * characters are more strictly sanitized - all '/'s become '_'s, for example.
+#    By default, shell special characters !#$^&*()[]| are also converted to _'s,
+#    as are spaces -- see [exported name edits] section.
+#  * it should include an extension, which will determine the export file type.
+#    .png is recommended, unless you are dealing with truly gigantic clippings.
+#    .webp, .jpg, and .ora are also supported.
+#
+#   Be aware that .jpg doesn't support alpha channel;
+#   areas that weren't included in your clipping, but are within its
+#   bounding box, will show up
+#   (since their color is preserved and the alpha is ignored.)
+#
+#   .webp is currently not recommended as the webp plugin ignores run-mode,
+#   which forces you to interact with its dialog every time you do an export.
+#   If you use a version of gimp-webp plugin newer than August 14 2015,
+#   this bug is fixed
+#   (see https://github.com/nathan-osman/gimp-webp/issues/1)
+#
+#
+# 'directory':
+#   Where to place exported clippings.
+#   '' or '.' -> current directory.
+#   This directory will automatically be created if it doesn't exist.
+#
+#   It will usually be a relative path, for example clippings/.
+#   Though you can set it to an absolute path if you want
+#   all your clippings going to the exact same place.
+#
+# 'jpeg quality':
+#   A number 0-100, controlling jpeg export quality. Only takes effect if you
+#   have specified jpg/jpeg output file format.
+#
+# 'webp quality':
+#   A number 0-100, controlling webp output quality.Only takes effect if you
+#   have specified webp output file format.
+#
+##
+# [export name edits] section
+#
+# This section is exactly the same as [clipping name edits],
+# but the replacements specified are applied to export filenames
+# after expanding the [export] 'name template'.
+#
+# Note that this can only effect the name of the file, not the directory it is
+# saved into.
+
+"""
     from ConfigParser import RawConfigParser
     c = RawConfigParser()
     for v in ('clipping stack', 'clipping name edits',
@@ -288,6 +359,7 @@ def _save_config(cfg, filename):
     except OSError:
         pass
     with open(filename, 'wt') as f:
+        f.write(DOCS)
         c.write(f)
 
 def _escape(layername):
