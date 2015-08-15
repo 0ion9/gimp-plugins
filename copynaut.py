@@ -91,14 +91,6 @@
 # PASTED_NAME_EDITS specifies a list of (python_regexp, replacement) pairs that are applied to the name of a pasted buffer before
 # setting the layer name.
 
-PASTED_NAME_EDITS = [('00_remove_double_bracketed', ('\[\[(.+)\]\]', '', 0)),
-                     ('01_remove_trailing_spaces', (' +$','', 0))]
-
-EXPORTED_NAME_EDITS = [('00_remove_double_bracketed',('\[\[(.+)\]\]', '', 0)),
-                      ('01_remove_trailing_spaces', (' +$','', 0)),
-                      ('02_slashes_to_underscores', ('/+','_', 0)),
-                      ('03_shell_to_underscores', ('[ !#$^&*()[\]|;]+','_', 0))]
-
 ## configuration ends ##
 
 import os
@@ -249,8 +241,18 @@ def _load_config(extra_search_path):
     e_directory = os.path.expanduser(cexport('directory'))
     e_webp_args = (int(cexport('webp quality')), )
     e_jpeg_args = (float(cexport('jpeg quality')) / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0 )
-    stackc = StackConfig(read_index, s_template, PASTED_NAME_EDITS)
-    exportc = ExportConfig(e_template, EXPORTED_NAME_EDITS, e_directory, e_webp_args, e_jpeg_args)
+    s_name_edits = []
+    e_name_edits = []
+    for key in sorted(c.options('clipping name edits')):
+        unparsed = c.get('clipping name edits', key)
+        data = _split_regex_replacement(unparsed)
+        s_name_edits.append((key, data))
+    for key in sorted(c.options('export name edits')):
+        unparsed = c.get('export name edits', key)
+        data = _split_regex_replacement(unparsed)
+        e_name_edits.append((key, data))
+    stackc = StackConfig(read_index, s_template, s_name_edits)
+    exportc = ExportConfig(e_template, e_name_edits, e_directory, e_webp_args, e_jpeg_args)
     data = Config(stackc, exportc)
     _config_cache = data
     return _config_cache
