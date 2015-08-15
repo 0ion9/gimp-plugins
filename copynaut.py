@@ -1,17 +1,11 @@
 #!/usr/bin/env python
 # Copynaut
 
-## Configuration ##
-
-
-## configuration ends ##
-
 import os
 import re
 from gimpfu import *
 from collections import namedtuple
 
-# XXX name edits are not handled via config-file yet
 Config = namedtuple('Config', 'stack export')
 StackConfig = namedtuple('StackConfig', 'read_index name_template name_edits')
 ExportConfig = namedtuple('ExportConfig', 'name_template name_edits directory webp_args jpeg_args')
@@ -99,7 +93,6 @@ def _split_regex_replacement(expression):
                 raise ValueError('Unknown regexp flag %r' % flag)
     return (regex, replacement, flags)
 
-# XXX we don't parse regexp replacements from config file yet, still using internal constants.
 # XXX we ignore extra_search_path for now.. Might look in same directory
 #     as source file, for config file, in the future.
 
