@@ -21,10 +21,10 @@ FIFO = -1
 #      basename    The basename of the file, excluding the extension
 #      ext         The extension of the file, including '.'
 #                  Includes special handling so that double-extensions like foo.xcf.bz2 are handled correctly
-#      path	   The full path to the file, excluding extension.
+#      path        The full path to the file, excluding extension.
 #      realpath    The full path to the file, excluding extension, with all symlinks resolved.
-#      mpixels	   The number of mpixels contained in the buffer, rounded to one decimal place.
-#      kpixels	   The number of kpixels contained in the buffer, rounded to one decimal place.
+#      mpixels     The number of mpixels contained in the buffer, rounded to one decimal place.
+#      kpixels     The number of kpixels contained in the buffer, rounded to one decimal place.
 #      layername   The name of the source layer
 #      layerpath   The full path to the source layer within the source file,
 #                  separated by '/'s.
@@ -108,13 +108,13 @@ MODE = LIFO
 # PASTED_NAME_EDITS specifies a list of (python_regexp, replacement) pairs that are applied to the name of a pasted buffer before
 # setting the layer name.
 
-PASTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
-                     (' +$','')]
+PASTED_NAME_EDITS = [('00_remove_double_bracketed', ('\[\[(.+)\]\]', '', 0)),
+                     ('01_remove_trailing_spaces', (' +$','', 0))]
 
-EXPORTED_NAME_EDITS = [('\[\[(.+)\]\]', ''),
-                      (' +$',''),
-                      ('/+','_'),
-                      ('[ !#$^&*()[\]|]+','_')]
+EXPORTED_NAME_EDITS = [('00_remove_double_bracketed',('\[\[(.+)\]\]', '', 0)),
+                      ('01_remove_trailing_spaces', (' +$','', 0)),
+                      ('02_slashes_to_underscores', ('/+','_', 0)),
+                      ('03_shell_to_underscores', ('[ !#$^&*()[\]|;]+','_', 0))]
 
 EXPORT_WEBP_QUALITY = 92
 EXPORT_JPG_QUALITY = 92
@@ -151,6 +151,7 @@ jpeg quality = 92
 """
 
 _config_cache = None
+_re_flagmap = {v.lower(): getattr(re, v) for v in [f for f in dir(re) if (not f == 'T') and len(f) == 1 and f.isupper()]}
 
 gettext.install("gimp20-python", gimp.locale_directory, unicode=True)
 
@@ -217,6 +218,29 @@ def _split_regex_replacement(expression):
 # XXX we ignore extra_search_path for now.. Might look in same directory
 #     as source file, for config file, in the future.
 
+def _serialize_regex_repl(tup):
+    regex, repl, flags = tup
+    schr = None
+    for bestchr in '/;,':
+        if not (bestchr in regex or bestchr in repl):
+            schr = bestchr
+    if not schr:
+        sep = 33
+        schr = chr(sep)
+        while bestchr in regex or bestchr in repl:
+            sep += 1
+            # can't use backslash
+            if sep == 92:
+                sep += 1
+            if sep > 128:
+                break
+            schr = chr(sep)
+        if sep >= 128:
+            raise ValueError('HALP')
+    flagchrs = "".join(sorted([c for c, v in _re_flagmap.items() if flags & v]))
+    return schr + schr.join([regex, repl, flagchrs])
+
+
 def _load_config(extra_search_path):
     global _config_cache
     if _config_cache is not None:
@@ -250,6 +274,28 @@ def _load_config(extra_search_path):
     data = Config(stackc, exportc)
     _config_cache = data
     return _config_cache
+
+def _save_config(cfg, filename):
+    c = RawConfigParser()
+    cstack = lambda k,v: c.set('clipping stack', k, v)
+    cexport = lambda k,v: c.set('export', k, v)
+    for k, v in (('webp quality', cfg.export.webp_args),
+                 ('jpeg quality', int(cfg.export.jpeg_args * 100)),
+                 ('name template', cfg.export.name_template),
+                 ('directory', cfg.export.directory)):
+        c.set('export', k, v)
+
+    for k, v in (('mode', 'last-in-first-out' if cfg.stack.read_index == 0 else 'first-in-first-out'),
+                 ('name template', cfg.stack.name_template)):
+        c.set('clipping stack', k, v)
+
+    for k, v in cfg.export.name_edits:
+        c.set('export name edits', k, _serialize_regex_repl(v))
+
+    for k, v in cfg.stack.name_edits:
+        c.set('clipping name edits', k, _serialize_regex_repl(v))
+
+    c.write(filename)
 
 def _escape(layername):
     return layername.replace('/','\\/')
@@ -310,10 +356,10 @@ def _expand_template(image, drawable, template):
       basename    The basename of the file, excluding the extension
       ext         The extension of the file, including '.'
                   Includes special handling so that double-extensions like foo.xcf.bz2 are handled correctly
-      path	  The full path to the file, excluding extension.
+      path    The full path to the file, excluding extension.
       realpath    The full path to the file, excluding extension, with all symlinks resolved.
-      mpixels	  The number of mpixels contained in the buffer, rounded to one decimal place.
-      kpixels	  The number of kpixels contained in the buffer, rounded to one decimal place.
+      mpixels     The number of mpixels contained in the buffer, rounded to one decimal place.
+      kpixels     The number of kpixels contained in the buffer, rounded to one decimal place.
       layername   The name of the source layer
       layerpath   The full path to the source layer within the source file.
       layerpath_multiple
@@ -419,8 +465,9 @@ def _expand_template(image, drawable, template):
 def _apply_regexp_substitutions(s, replacements):
     import re
     final = s
-    for src, repl in replacements:
-        final = re.sub(src, repl, final)
+    for name, v in replacements:
+        src, repl, flags = v
+        final = re.sub(src, repl, final, flags=flags)
     return final
 
 def _copyn(image, drawable, visible = False):
