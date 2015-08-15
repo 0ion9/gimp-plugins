@@ -79,8 +79,12 @@ BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
 #  * it should include an extension, which will determine the export file type.
 #    .png is recommended, unless you are dealing with truly gigantic clippings.
 #    .webp, .jpg, and .ora are also supported.
-#    Be aware that .jpg doesn't support alpha channel, and .webp plugin currently doesn't handle alpha channel,
-#    so both of these will be flattened during export.
+#    Be aware that .jpg doesn't support alpha channel; areas that weren't included in your clipping, but within its bounding box,
+#    will show up (since their color is preserved and the alpha is ignored.)
+#
+#    .webp is currently not recommended as the webp plugin ignores run-mode, which forces you to interact with its dialog every time you do an export.
+#    If you use a version of gimp-webp plugin newer than August 14 2015, this bug is fixed (see https://github.com/nathan-osman/gimp-webp/issues/1)
+#
 #
 
 EXPORT_NAME_TEMPLATE = '{layerpath_multiple}.png'
@@ -335,7 +339,7 @@ def _numbered_filename(path, digits=2):
     from itertools import count
     if digits < 1 or digits > 100:
         raise ValueError('Invalid number of digits %r' % digits)
-    format = '%0' + str(digits) + 'd'
+    format = '-%0' + str(digits) + 'd'
     if not os.path.exists(path):
         return path
     base, ext = _splitext(path)
@@ -367,10 +371,12 @@ def _export(image, path):
         pdb.file_openraster_save(*params)
         return True
     elif ext == '.webp':
-        pdb.file_webp_save(*params, EXPORT_WEBP_QUALITY)
+        params = params + ( EXPORT_WEBP_QUALITY, )
+        pdb.file_webp_save(*params)
         return True
     elif ext in ('.jpg','.jpeg'):
-        pdb.file_jpg_save(*params, EXPORT_JPG_QUALITY / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0)
+        params = params + (EXPORT_JPG_QUALITY / 100., 0.0, 1, 1, "Exported by Copynaut", 1, 1, 0, 0)
+        pdb.file_jpeg_save(*params)
         return True
     return False
 
