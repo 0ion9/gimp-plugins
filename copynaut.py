@@ -1,17 +1,7 @@
 #!/usr/bin/env python
-#
-#
-# XXX 'paste to file and delete' action
-#   ... or maybe instead 'copy to file' (ie put into new image, export. Using the same naming template of course.)
-#          probably with a interactive (input a simple id string for that clip) and noninteractive variant.
+# Copynaut
 
-
-## Constants used in configuration (do not modify)
-
-LIFO = 0
-FIFO = -1
-
-## Configuration (do modify) ##
+## Configuration ##
 
 # BUFFER_NAME_TEMPLATE determines the naming of the named-buffers created.
 #
@@ -68,8 +58,6 @@ FIFO = -1
 #
 #
 
-BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
-
 # EXPORT_NAME_TEMPLATE is just like BUFFER_NAME_TEMPLATE, except for the
 # following :
 #
@@ -87,8 +75,7 @@ BUFFER_NAME_TEMPLATE = '{basename_layerpath} {where}'
 #
 #
 
-EXPORT_NAME_TEMPLATE = '{layerpath_multiple}.png'
-
+# EXPORT_DIRECTORY:
 # Where to place exported clippings.
 # '' or '.' -> current directory.
 # This directory will automatically be created if it doesn't exist.
@@ -97,13 +84,9 @@ EXPORT_NAME_TEMPLATE = '{layerpath_multiple}.png'
 # Though you can set it to an absolute path if you want all your clippings going to the exact same place.
 #
 
-EXPORT_DIRECTORY = ''
-
 # MODE should be either LIFO or FIFO.
 # In LIFO mode, the last item you copied is the first to be pasted (the 'queue' empties from the end)
 # In FIFO mode, the first item you copied is the first to be pasted (the 'queue' empties from the start)
-
-MODE = LIFO
 
 # PASTED_NAME_EDITS specifies a list of (python_regexp, replacement) pairs that are applied to the name of a pasted buffer before
 # setting the layer name.
@@ -115,9 +98,6 @@ EXPORTED_NAME_EDITS = [('00_remove_double_bracketed',('\[\[(.+)\]\]', '', 0)),
                       ('01_remove_trailing_spaces', (' +$','', 0)),
                       ('02_slashes_to_underscores', ('/+','_', 0)),
                       ('03_shell_to_underscores', ('[ !#$^&*()[\]|;]+','_', 0))]
-
-EXPORT_WEBP_QUALITY = 92
-EXPORT_JPG_QUALITY = 92
 
 ## configuration ends ##
 
@@ -475,7 +455,7 @@ def _copyn(image, drawable, visible = False):
     if not drawable:
         drawable = image.active_drawable
     conf = _load_config(image.filename)
-    used = _expand_template(image, drawable, conf.stack.name_template)# BUFFER_NAME_TEMPLATE)
+    used = _expand_template(image, drawable, conf.stack.name_template)
     print('I,D:', image, drawable)
     if visible:
         pdb.gimp_edit_named_copy_visible(image, used)
@@ -535,8 +515,8 @@ def exportn(image, drawable, suffix, visible = False):
         pdb.gimp_message('Image must be saved on disk before exporting clippings.')
         return
     conf = _load_config(image.filename)
-    dest = _expand_template(image, drawable, conf.export.name_template)#EXPORT_NAME_TEMPLATE)
-    dest = _apply_regexp_substitutions(dest, conf.export.name_edits)#EXPORTED_NAME_EDITS)
+    dest = _expand_template(image, drawable, conf.export.name_template)
+    dest = _apply_regexp_substitutions(dest, conf.export.name_edits)
     if visible:
         bname = pdb.gimp_edit_named_copy_visible(image, '_' + dest)
     else:
@@ -562,7 +542,7 @@ def exportn(image, drawable, suffix, visible = False):
         ext = destbase
         destbase = ''
     fnamebase = os.path.splitext(image.filename)[0]
-    if not os.path.isabs(EXPORT_DIRECTORY):
+    if not os.path.isabs(conf.export.directory):
         basedir = os.path.join(conf.export.directory, os.path.dirname(fnamebase))
     else:
         basedir = conf.export.directory
