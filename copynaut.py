@@ -647,14 +647,19 @@ def exportn(image, drawable, suffix, visible=False):
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
-def exportfromvectors(image, drawable, visible):
+def exportfromvectors(image, drawable, visible, aa, feather, feather_radius):
     pdb.gimp_image_undo_group_start(image)
     vectors = image.vectors
+    pdb.gimp_context_push()
+    pdb.gimp_context_set_antialias(aa)
+    pdb.gimp_context_set_feather(feather)
+    pdb.gimp_context_set_feather_radius(feather_radius, feather_radius)
     # process vectors bottom-to-top
     for v in reversed(vectors):
         name = v.name
         pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, v)
         exportn(image, drawable, name, visible)
+    pdb.gimp_context_pop()
     pdb.gimp_image_undo_group_end(image)
 
 def _pastenandremove(image, drawable, read_index, pasteinto):
@@ -843,11 +848,14 @@ register(
     params=[
             (PF_IMAGE, "image", "image", None),
             (PF_LAYER, "drawable", "drawable", None),
-            (PF_BOOL, "visible", "Copy _Visible", False)
+            (PF_BOOL, "visible", "Copy _Visible", False),
+            (PF_BOOL, "aa", "_Antialias", True),
+            (PF_BOOL, "feather", "_Feather", False),
+            (PF_FLOAT, "feather_radius", "Feather _Radius", 5.0),
             ],
     results=[],
     function=exportfromvectors,
-    menu=("<Image>/Edit"),# might go in <Vectors>?
+    menu=("<Image>/File"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 

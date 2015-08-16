@@ -11,7 +11,7 @@ Plugin synopses
 
 * *applylayer* : Iteratively 'apply paint' - merges down the content in a layer/group and then clears the content in it (without actually removing the layers themselves)
 * *backgroundify* : Add a background color/pattern to (part of) one or all layers
-* *copynaut* : Fast interface to automatically-named GIMP Named Buffers, for collaging. Quickly accumulate a set of clippings and then dispense them. Also a similar interface to quickly export the selected area to file.
+* *copynaut* : Fast interface to automatically-named GIMP Named Buffers, for collaging. Quickly accumulate a set of clippings and then dispense them. Also a similar interface to quickly export the selected area, or a set of areas, to file.
 * *generate_colorband* : Color analysis. Attempts to find and intelligently group N colors representing the layer, producing a 'color band' similar to the output of Smooth Palette. Really SLOW.
 * *palette_to_layer_pixels* : Allows editing palettes via image color operators like Curves, by.. transferring them into and out of layers.
 * *select_layers* : 'Grep' for layers. Removes layers that do/don't match a glob or Python regexp pattern.
