@@ -405,7 +405,7 @@ def _subst_preprocess(format_str, data):
     return result
 
 
-def _expand_template(image, drawable, template):
+def _expand_template(image, drawable, template, nlayers):
     """Expand the string template, returning the semi-final name of the buffer
     (*semi*-final because GIMP may still generate a #n suffix if multiple of the name occurs)
 
@@ -489,7 +489,7 @@ def _expand_template(image, drawable, template):
     ismask = 'M' if drawable.is_layer_mask else ''
     isize = '%dx%d' % (image.width, image.height)
     where = '[[%s+%s]]' % (isize, offsets)
-    layerpath_multiple = '' if len(image.layers) == 1 else layerpath
+    layerpath_multiple = '' if nlayers == 1 else layerpath
     data = dict(path=path,
                 ext=ext,
                 basename=basename,
@@ -533,7 +533,10 @@ def _copyn(image, drawable, visible=False):
     if not drawable:
         drawable = image.active_drawable
     conf = _load_config(image.filename)
-    used = _expand_template(image, drawable, conf.stack.name_template)
+    nlayers = len(image.layers)
+    if visible:
+        nlayers = 1
+    used = _expand_template(image, drawable, conf.stack.name_template, nlayers)
     print('I,D:', image, drawable)
     if visible:
         pdb.gimp_edit_named_copy_visible(image, used)
@@ -593,7 +596,10 @@ def exportn(image, drawable, suffix, visible=False):
         pdb.gimp_message('Image must be saved on disk before exporting clippings.')
         return
     conf = _load_config(image.filename)
-    dest = _expand_template(image, drawable, conf.export.name_template)
+    nlayers = len(image.layers)
+    if visible:
+        nlayers = 1
+    dest = _expand_template(image, drawable, conf.export.name_template, nlayers)
     dest = _apply_regexp_substitutions(dest, conf.export.name_edits)
     if visible:
         bname = pdb.gimp_edit_named_copy_visible(image, '_' + dest)
@@ -608,7 +614,7 @@ def exportn(image, drawable, suffix, visible=False):
     #
     # to determine the final export path.
     #
-    suffix = _expand_template(image, drawable, suffix)
+    suffix = _expand_template(image, drawable, suffix, nlayers)
     suffix = _apply_regexp_substitutions(suffix, conf.export.name_edits)
     destbase, ext = _splitext(dest)
     if destbase.startswith('.'):
