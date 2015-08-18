@@ -653,7 +653,7 @@ def exportn(image, drawable, suffix, visible=False):
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
-def exportfromvectors(image, drawable, visible, aa, feather, feather_radius):
+def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, save_vectors=False):
     pdb.gimp_image_undo_group_start(image)
     vectors = image.vectors
     pdb.gimp_context_push()
@@ -666,6 +666,10 @@ def exportfromvectors(image, drawable, visible, aa, feather, feather_radius):
         pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, v)
         exportn(image, drawable, name, visible)
     pdb.gimp_context_pop()
+    if save_vectors:
+        # export to $FILENAME-vectors.svg
+        vfilename = os.path.join(os.path.splitext(image.filename)[0] + '-vectors.svg')
+        pdb.gimp_vectors_export_to_file(image, vfilename, None)
     pdb.gimp_image_undo_group_end(image)
 
 def _pastenandremove(image, drawable, read_index, pasteinto):
@@ -858,6 +862,7 @@ register(
             (PF_BOOL, "aa", "_Antialias", True),
             (PF_BOOL, "feather", "_Feather", False),
             (PF_FLOAT, "feather_radius", "Feather _Radius", 5.0),
+            (PF_BOOL, "save_vectors", "Also export vector masks to SVG", True),
             ],
     results=[],
     function=exportfromvectors,
