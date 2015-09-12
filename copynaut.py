@@ -901,7 +901,7 @@ register(
             (PF_IMAGE, "image", "image", None),
             (PF_LAYER, "drawable", "drawable", None),
             (PF_STRING, "suffix", "_Suffix", ''),
-            (PF_BOOL, "visible", "Copy _Visible", True)
+            (PF_BOOL, "visible", "Copy _Visible", True),
             (PF_BOOL, "tagsource", "TMSU-tag source_info", True)
             ],
     results=[],
@@ -928,7 +928,7 @@ register(
             (PF_BOOL, "feather", "_Feather", False),
             (PF_FLOAT, "feather_radius", "Feather _Radius", 5.0),
             (PF_BOOL, "save_vectors", "Also export vector masks to SVG", True),
-            (PF_BOOL, "tagsource", "TMSU tag source_info", True)
+            (PF_BOOL, "tagsource", "TMSU tag source_info", True),
             ],
     results=[],
     function=exportfromvectors,
