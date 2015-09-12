@@ -13,7 +13,9 @@ def _item_get_clearable(item):
         items.extend(_item_get_clearable(member))
     return items
 
-    
+
+# XXX maybe a way to apply only the selected pixels (leaving the others) would be useful?
+
 def applylayer(image, drawable):
     # ugh, why is drawable usually None????
     if not drawable:
@@ -29,8 +31,14 @@ def applylayer(image, drawable):
     sel = None
     if pdb.gimp_selection_bounds(image)[0] != 0:
         sel = pdb.gimp_selection_save(image)
+    hadlayermask = drawable.mask
+    # Masks have to be applied before the merge->duplicate process can work correctly
+    if hadlayermask:
+        pdb.gimp_layer_apply_mask(drawable, MASK_APPLY)
     dupe = pdb.gimp_layer_copy(drawable, 0)
     pdb.gimp_image_insert_layer(image, dupe, parent, origindex+1)
+    if hadlayermask:
+        pdb.gimp_layer_create_mask(dupe, ADD_WHITE_MASK)
     image.merge_down(dupe, CLIP_TO_BOTTOM_LAYER)
     pdb.gimp_selection_none(image)
     for layer in _item_get_clearable(drawable):
