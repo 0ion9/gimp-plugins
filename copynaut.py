@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 # Copynaut
+#
+# Outstanding issues:
+# * Extracting content from indexed images does not preserve their palette.
+#   Because GIMP has a bug in indexization where, given a preset palette, some image colors that match exactly will be matched to some other color instead,
+#   this is not going to be fixed for the moment. When I decide it's okay to depend on NumPy, then we can use its binning functions to
+#   do indexization properly (since we know all matches will be exact matches, and there will be <= 256 of them.)
+#
 
 import os
 import re
@@ -672,6 +679,62 @@ def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, sav
         pdb.gimp_vectors_export_to_file(image, vfilename, None)
     pdb.gimp_image_undo_group_end(image)
 
+def gridtovectors(image, drawable, skipblanks, skipdupes):
+    # creates a set of rectangular vectors for use with exportfromvectors.
+    # only iterates through tiles within the selection, if there is a selection.
+    #
+    from hashlib import sha1
+    if not drawable:
+        drawable = image.active_drawable
+
+    seen = set()
+    gridw, gridh = pdb.gimp_image_grid_get_spacing(image)
+    gridw = int(gridw)
+    gridh = int(gridh)
+    issel, x1, y1, x2, y2 = pdb.gimp_selection_bounds(image)
+    selw, selh = (image.width, image.height) if pdb.gimp_selection_is_empty(image) else (x2 - x1, y2 - y1)
+    if selw % gridw or selh % gridh:
+        pdb.gimp_message('Selection dimensions %dx%d are not evenly divisible by grid size %dx%d' % (selw, selh, gridw, gridh))
+    tovisit = []
+    for y in range(0, selh, gridh):
+        for x in range(0, selw, gridw):
+            if issel:
+                 if pdb.gimp_selection_value(image, x1 + x, y1 + y) >= 128:
+                     tovisit.append((x1 + x, y1 + y))
+            else:
+                 tovisit.append((x1 + x, y1 + y))
+    pr = drawable.get_pixel_rgn(x1, y1, selw, selh, False, False)
+    npixels = gridw * gridh
+    pdb.gimp_image_undo_group_start(image)
+    vector_count  = 0
+    for xc, yc in tovisit:
+        # get tile content
+        tile = pr[xc:xc+gridw, yc:yc+gridw]
+        pixel1 = pr[xc, yc]
+        # pixelrgn..
+        tilehash = sha1(tile).digest()
+        if skipdupes and tilehash in seen:
+            continue
+        # XXX is pixel1 a string/bytestring, which is what we want here? or a tuple, which isn't?
+        print('pixel1 is %r, a %r' % (pixel1, type(pixel1)))
+        if skipblanks and pixel1 * npixels == tile:
+            continue
+        name = '%03d_%03d' % ((x1 + xc) / gridw, (y1 + yc) / gridh)
+        vec = pdb.gimp_vectors_new(image, name)
+        pdb.gimp_image_insert_vectors(image, vec, None, 0)
+        # CACCACCACCAC
+        pdb.gimp_vectors_stroke_new_from_points(vec, 0, 4 * 3 * 2,
+          [ xc, yc, xc, yc, xc, yc,
+            xc+gridw, yc, xc+gridw, yc, xc+gridw, yc,
+            xc+gridw, yc+gridh, xc+gridw, yc+gridh, xc+gridw, yc+gridh,
+            xc, yc+gridh, xc, yc+gridh, xc, yc+gridh],
+          True)
+        vector_count += 1
+        seen.add(tilehash)
+    print ('Total vectors added: %d' % vector_count)
+    pdb.gimp_image_undo_group_end(image)
+
+
 def _pastenandremove(image, drawable, read_index, pasteinto):
     import re
     # ugh, why is drawable usually None????
@@ -867,6 +930,27 @@ register(
     results=[],
     function=exportfromvectors,
     menu=("<Image>/File"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
+    proc_name="python-fu-grid-to-vectors",
+    blurb="Create a vectors object for each grid 'tile' within the current selection (or entire image if there is no selection)",
+    help=("Intended for use with python-fu-export-clippings-from-vectors."),
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Grid to Vectors"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            (PF_BOOL, "skipblanks", "Ignore _Blanks", True),
+            (PF_BOOL, "skipdupes", "Ignore _Duplicates", True)
+            ],
+    results=[],
+    function=gridtovectors,
+    menu=("<Image>/Image"),
     domain=("gimp20-python", gimp.locale_directory)
     )
 
