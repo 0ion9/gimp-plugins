@@ -596,7 +596,8 @@ def _export(image, path):
         return True
     return False
 
-def exportn(image, drawable, suffix, visible=False):
+def exportn(image, drawable, suffix, visible=False, tagsource=True, sourceobj=None):
+    # xxx implement tagsource
     if not drawable:
         drawable = image.active_drawable
     if not image.filename:
@@ -660,7 +661,7 @@ def exportn(image, drawable, suffix, visible=False):
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
-def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, save_vectors=False):
+def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, save_vectors=False, tagsource=True):
     pdb.gimp_image_undo_group_start(image)
     vectors = image.vectors
     pdb.gimp_context_push()
@@ -671,7 +672,7 @@ def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, sav
     for v in reversed(vectors):
         name = v.name
         pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, v)
-        exportn(image, drawable, name, visible)
+        exportn(image, drawable, name, visible, tagsource)
     pdb.gimp_context_pop()
     if save_vectors:
         # export to $FILENAME-vectors.svg
@@ -900,7 +901,8 @@ register(
             (PF_IMAGE, "image", "image", None),
             (PF_LAYER, "drawable", "drawable", None),
             (PF_STRING, "suffix", "_Suffix", ''),
-            (PF_BOOL, "visible", "Copy _Visible", False)
+            (PF_BOOL, "visible", "Copy _Visible", True)
+            (PF_BOOL, "tagsource", "TMSU-tag source_info", True)
             ],
     results=[],
     function=exportn,
@@ -921,11 +923,12 @@ register(
     params=[
             (PF_IMAGE, "image", "image", None),
             (PF_LAYER, "drawable", "drawable", None),
-            (PF_BOOL, "visible", "Copy _Visible", False),
+            (PF_BOOL, "visible", "Copy _Visible", True),
             (PF_BOOL, "aa", "_Antialias", True),
             (PF_BOOL, "feather", "_Feather", False),
             (PF_FLOAT, "feather_radius", "Feather _Radius", 5.0),
             (PF_BOOL, "save_vectors", "Also export vector masks to SVG", True),
+            (PF_BOOL, "tagsource", "TMSU tag source_info", True)
             ],
     results=[],
     function=exportfromvectors,
