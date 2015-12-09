@@ -52,6 +52,8 @@ def potraceit(image, drawable, turdsize, smoothness, optimizecurves,
         raise RuntimeError('Unrecognized postprocessing id %r' % poststep)
     pdb.gimp_image_undo_group_end(image)
 
+# XXX Implement path inset/outset via Inkscape.
+
 register(
     proc_name="python-fu-selection-to-path",
     blurb="Potrace the selection, producing a clean SVG path",
@@ -65,11 +67,11 @@ register(
             (PF_IMAGE, "image", "_Image", None),
             (PF_LAYER, "drawable", "_Drawable", None),
             (PF_INT, "turdsize", "Noise removal scale", 1),
-            (PF_FLOAT, "smoothness", "Smoothness (0..1.4)", 0.9),
+            (PF_FLOAT, "smoothness", "Smoothness (0..1.4)", 1.0),
             (PF_BOOL, "optimizecurves", "Optimize long curves", True),
             (PF_FLOAT, "optimtolerance", "Optimization tolerance", 0.2),
             (PF_INT, "quantize", "Quantization (1/Nth of a pixel)", 10),
-            (PF_OPTION, "poststep", "After importing path, take action:", 0,
+            (PF_OPTION, "poststep", "After importing path, take action:", 1,
             (_('Nothing'),
              _('Load into selection')
             )),
