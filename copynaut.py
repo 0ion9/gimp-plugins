@@ -12,6 +12,7 @@ import os
 import re
 from gimpfu import *
 from collections import namedtuple
+from contextlib import contextmanager
 
 Config = namedtuple('Config', 'stack export')
 StackConfig = namedtuple('StackConfig', 'read_index name_template name_edits')
@@ -40,6 +41,9 @@ _config_cache = None
 _re_flagmap = {v.lower(): getattr(re, v) for v in [f for f in dir(re) if (not f == 'T') and len(f) == 1 and f.isupper()]}
 
 gettext.install("gimp20-python", gimp.locale_directory, unicode=True)
+
+
+# low level helpers
 
 def _splitext(path):
     """os.path.splitext variant that detects single-file-compressor extensions.
@@ -125,9 +129,32 @@ def _serialize_regex_repl(tup):
     flagchrs = "".join(sorted([c for c, v in _re_flagmap.items() if flags & v]))
     return schr + schr.join([regex, repl, flagchrs])
 
-
 def _getconfigpath():
     return os.path.join(gimp.directory, 'copynaut', 'config.ini')
+
+@contextmanager
+def undogroup(image):
+    pdb.gimp_image_undo_group_start(image)
+    yield
+    pdb.gimp_image_undo_group_end(image)
+
+def iterate_layer_visibility(image, keep_bg=False):
+    saved_visibility = [(l, l.visible) for l in image.layers]
+    working_set = image.layers
+    if keep_bg:
+        working_set = image.layers[:-1]
+        image.layers[-1].visible = True
+    for i, layer in enumerate(working_set):
+        for l in working_set:
+            if l != layer:
+                l.visible = False
+            else:
+                l.visible = True
+        yield (i, layer)
+    for l, vis in saved_visibility:
+        l.visible = vis
+
+# config
 
 def _load_config(extra_search_path):
     global _config_cache
@@ -412,7 +439,7 @@ def _subst_preprocess(format_str, data):
     return result
 
 
-def _expand_template(image, drawable, template, nlayers):
+def _expand_template(image, drawable, vectors, template, nlayers):
     """Expand the string template, returning the semi-final name of the buffer
     (*semi*-final because GIMP may still generate a #n suffix if multiple of the name occurs)
 
@@ -444,10 +471,10 @@ def _expand_template(image, drawable, template, nlayers):
                   if a 'where' tag is found in the name of a buffer that is being pasted, and the image dimensions match this image,
                   the clipping will be pasted at the specified offsets.
       offsets     Equivalent to {offsetx},{offsety}
-      offsetx     X offset of the drawable in the source image
-      offsety     Y offset of the drawable in the source image
+      offsetx     X offset of the selection in the source image
+      offsety     Y offset of the selection in the source image
       ismask      'M' if the source drawable is a layer mask
-
+      vectors     name of vectors object passed to _expand_template ('' if vectors is None)
 
     """
     filename = image.filename or '<none>'
@@ -486,17 +513,21 @@ def _expand_template(image, drawable, template, nlayers):
     width = '<you should never see this>'
     height = width
     size = width
-    if 'width' in template or 'height' in template or 'size' in template:
+    offsetx, offsety = 0, 0
+    if 'width' in template or 'height' in template or 'size' in template or 'offset' in template:
         x1, y1, x2, y2 = drawable.mask_bounds
         width = x2 - x1
         height = y2 - y1
         size = '%dx%d' % (width, height)
-    offsetx, offsety = drawable.offsets
+        offsetx, offsety = x1, y1
     offsets = '%d,%d' % (offsetx, offsety)
     ismask = 'M' if drawable.is_layer_mask else ''
     isize = '%dx%d' % (image.width, image.height)
     where = '[[%s+%s]]' % (isize, offsets)
     layerpath_multiple = '' if nlayers == 1 else layerpath
+    _vectors = ''
+    if vectors:
+        _vectors = vectors.name
     data = dict(path=path,
                 ext=ext,
                 basename=basename,
@@ -520,7 +551,8 @@ def _expand_template(image, drawable, template, nlayers):
                 offsetx=offsetx,
                 offsety=offsety,
                 ismask=ismask,
-                layerpath_multiple=layerpath_multiple)
+                layerpath_multiple=layerpath_multiple,
+                vectors=vectors)
     newtemplate = _subst_preprocess(template, data)
     try:
          return newtemplate.format(**data)
@@ -543,7 +575,7 @@ def _copyn(image, drawable, visible=False):
     nlayers = len(image.layers)
     if visible:
         nlayers = 1
-    used = _expand_template(image, drawable, conf.stack.name_template, nlayers)
+    used = _expand_template(image, drawable, None, conf.stack.name_template, nlayers)
     print('I,D:', image, drawable)
     if visible:
         pdb.gimp_edit_named_copy_visible(image, used)
@@ -596,7 +628,130 @@ def _export(image, path):
         return True
     return False
 
-def exportn(image, drawable, suffix, visible=False, tagsource=True, sourceobj=None):
+def apply_src_tag(conf, path, image, drawable, vectors=None, nlayers=1):
+    # for now, we just tag mtime year (eg 2010) of src onto the extracted item
+    from subprocess import check_output, CalledProcessError, call
+    import os
+    import re
+    import time
+    try:
+        tmsu = check_output(['which','tmsu'])
+    except CalledProcessError:
+        pdb.gimp_message('Skipping tmsu tagging for %r, tmsu doesn\'t appear to be installed.' % path)
+        return
+#    try:
+#        refcodes = check_output(['which','refcodes'])
+#    except CalledProcessError:
+#        pdb.gimp_message('Skipping tmsu tagging for %r, refcodes doesn\'t appear to be installed.' % path)
+#        return
+#    template = '[+{offsets}]' if not vectors else '[+{offsets}~{vectors}]'
+#    content = _expand_template(image, drawable, vectors, template, nlayers)
+#    content = _apply_regexp_substitutions(content, [('noslashes', ('/+','_', 0))])
+#    refcode = check_output(['refcodes', '-s', '--', image.filename]).rstrip()
+#    if len(refcode) < 4:
+#        pdb.gimp_message('Skipping tmsu tagging for %r, refcode %r returned for %r looks invalid.' % (path, refcode, image.filename))
+    # get any 'general tags' that apply to all extractions in this directory.
+    dirname = os.path.dirname(path)
+    tags = check_output(['tmsu', 'tags', '--', os.path.realpath(dirname)], cwd=dirname).decode('utf8').strip()
+    pdb.gimp_message('raw tag output = %r' % (tags,))
+    tags = tags.split(': ', 1)
+    if len(tags) == 1:
+        tags = []
+    else:
+        # XXX implement support for \-escaping, eg. '\ '
+        tags = tags[-1].split(' ')
+    if len(tags) == 1 and tags[0] == '':
+        tags = []
+    mtyear = time.localtime(os.stat(image.filename).st_mtime).tm_year
+    content = str(mtyear)
+    # don't I have a thing for tmsu-escaping values lying around somewhere? lhtag?
+    # a quick fix should just escape any spaces or equals..
+    o = check_output(['tmsu', '-v','tag', '--', path, content] + tags, cwd=dirname)
+
+
+@contextmanager
+def indexed_handler(image):
+    """If image is indexed, store its colormap in a temporary palette and return its name.
+       Otherwise, return None
+
+    """
+    p = None
+    if image.base_type == INDEXED and image.colormap:
+        palette_name = '__ %s temp export __' % (os.path.basename(image.name),)
+        palette_name = pdb.gimp_palette_new(palette_name)
+        p = palette_name
+        cmap = image.colormap
+        i = 0
+        for r,g,b in zip(cmap[::3], cmap[1::3], cmap[2::3]):
+            r = ord(r)
+            g = ord(g)
+            b = ord(b)
+            pdb.gimp_palette_add_entry(p, ('Index %d' % i), (r, g, b))
+            i += 1
+    else:
+        p = None
+    yield p
+    if p:
+        pdb.gimp_palette_delete(p)
+
+    # XXX in GIMP 2.9, non-binary alpha on an indexed image is possible and should be produced.
+
+def apply_palette(image, palette):
+    """Indexize image to palette, with no dithering.
+
+    Unused palette colors are preserved.
+
+    If palette is None, does nothing.
+    """
+    if palette is None:
+        return
+    pdb.gimp_image_convert_indexed(image, NO_DITHER, CUSTOM_PALETTE, -1, 0, 0, palette)
+
+def colortoalpha_borders(image, drawable, radius):
+    # depends on python-fu-selection-from-path (sel2path plugin)
+    # algorithm is:
+    #
+    # * save drawable type
+    # * expand 1px on every border
+    # * convert to rgb
+    # * load drawable mask -> selection
+    # * invert
+    # * grow N
+    # * smooth it using python-fu-selection-from-path (if image type wasn't indexed)
+    # * call color2alpha
+    # * crop +1,+1.. -1,-1
+    # * restore drawable type
+    #
+    if radius <= 0:
+        return
+    itype = image.base_type
+    ifunc = pdb.gimp_image_convert_grayscale
+    pdb.gimp_image_undo_group_start(image)
+    if itype in (RGB, INDEXED):
+        ifunc = lambda v:v
+        if itype == INDEXED:
+            pdb.gimp_image_convert_rgb(image)
+    else:
+        # XXX un-indexes images.
+        pdb.gimp_image_convert_rgb(image)
+    pdb.gimp_image_resize(image, image.width + 2, image.height + 2, 1, 1)
+    for l in image.layers:
+        pdb.gimp_layer_resize_to_image_size(l)
+
+    pdb.gimp_selection_all(image)
+    pdb.gimp_image_select_item(image, CHANNEL_OP_SUBTRACT, image.layers[0])
+    pdb.gimp_selection_grow(image, radius)
+    pdb.python_fu_selection_to_path(image, image.layers[0], 1, 1.0, True, 0.2, 10, 1, True, False, 0.0)
+
+    pdb.plug_in_colortoalpha(image, drawable or image.layers[0], (255,255,255))
+    pdb.gimp_image_resize(image, image.width - 2, image.height - 2, -1, -1)
+    for l in image.layers:
+        pdb.gimp_layer_resize_to_image_size(l)
+    ifunc(image)
+    pdb.gimp_image_undo_group_end(image)
+
+def exportn(image, drawable, suffix, visible=False, autocrop=False, tagsource=True, presuffix='', colortoalpha=1, vectors=None):
+    # XXX indexed input should produce indexed output
     # xxx implement tagsource
     if not drawable:
         drawable = image.active_drawable
@@ -607,14 +762,31 @@ def exportn(image, drawable, suffix, visible=False, tagsource=True, sourceobj=No
     nlayers = len(image.layers)
     if visible:
         nlayers = 1
-    dest = _expand_template(image, drawable, conf.export.name_template, nlayers)
+    # XXX actually support override properly via an argument
+    dest_override = ''
+    dest_override = dest_override if dest_override.rstrip() != '' else ''
+    dest = _expand_template(image, drawable, None, dest_override or conf.export.name_template, nlayers)
     dest = _apply_regexp_substitutions(dest, conf.export.name_edits)
+    destbase, ext = _splitext(dest)
+
     if visible:
         bname = pdb.gimp_edit_named_copy_visible(image, '_' + dest)
     else:
         bname = pdb.gimp_edit_named_copy(drawable, '_' + dest)
+
     # paste as new image (This doesn't automatically create a view, thankfully)
-    newimg = pdb.gimp_edit_named_paste_as_new(bname)
+    with indexed_handler(image) as ipalette:
+        newimg = pdb.gimp_edit_named_paste_as_new(bname)
+        if ipalette:
+            pdb.gimp_message('indexizing..')
+            if ext.lower() != '.png' and dest != '.png':
+                pdb.gimp_message('Only png format is currently supported for indexed export, falling back to non-indexed for %r.' % bname)
+            else:
+                apply_palette(newimg, ipalette)
+        if colortoalpha > 0:
+            colortoalpha_borders(newimg, newimg.layers[0], colortoalpha)
+        if autocrop:
+            pdb.plug_in_autocrop(newimg, newimg.layers[0])
     # XXX perform extra processing -- border or flattening
     #
     # The following code puts parts together as follows:
@@ -622,9 +794,10 @@ def exportn(image, drawable, suffix, visible=False, tagsource=True, sourceobj=No
     #
     # to determine the final export path.
     #
-    suffix = _expand_template(image, drawable, suffix, nlayers)
+    suffix = presuffix + suffix
+    suffix = _expand_template(image, drawable, None, suffix, nlayers)
     suffix = _apply_regexp_substitutions(suffix, conf.export.name_edits)
-    destbase, ext = _splitext(dest)
+
     if destbase.startswith('.'):
         # when dest is eg '.png', because for example layerpath_multiple expands to '' since there is only one layer,
         # this can happen
@@ -658,6 +831,8 @@ def exportn(image, drawable, suffix, visible=False, tagsource=True, sourceobj=No
     export_ok = _export(newimg, path)
     if not export_ok:
         pdb.gimp_message('%r file format currently not supported!' % e)
+    elif tagsource:
+        apply_src_tag(conf, path, image, drawable, vectors, nlayers)
     pdb.gimp_image_delete(newimg)
     pdb.gimp_buffer_delete(bname)
 
@@ -672,7 +847,8 @@ def exportfromvectors(image, drawable, visible, aa, feather, feather_radius, sav
     for v in reversed(vectors):
         name = v.name
         pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, v)
-        exportn(image, drawable, name, visible, tagsource)
+        # XXX hardcoded autocrop=False
+        exportn(image, drawable, name, visible, False, tagsource, vectors=v)
     pdb.gimp_context_pop()
     if save_vectors:
         # export to $FILENAME-vectors.svg
@@ -717,7 +893,6 @@ def gridtovectors(image, drawable, skipblanks, skipdupes):
         if skipdupes and tilehash in seen:
             continue
         # XXX is pixel1 a string/bytestring, which is what we want here? or a tuple, which isn't?
-        print('pixel1 is %r, a %r' % (pixel1, type(pixel1)))
         if skipblanks and pixel1 * npixels == tile:
             continue
         name = '%03d_%03d' % ((x1 + xc) / gridw, (y1 + yc) / gridh)
@@ -734,6 +909,28 @@ def gridtovectors(image, drawable, skipblanks, skipdupes):
         seen.add(tilehash)
     print ('Total vectors added: %d' % vector_count)
     pdb.gimp_image_undo_group_end(image)
+
+def serialexport(image, drawable):
+    if not drawable:
+        drawable = image.active_drawable
+    if not image.filename:
+        pdb.gimp_message('Image must be saved on disk before serial export.')
+        return
+    path = _numbered_filename(image.filename)
+    # XXX duplicate the image and merge all layers
+    # or alternatively, save selection and select all, then copy visible and export that
+    #
+
+def exportlayers(image, drawable, keep_bg, tagsource):
+    if not drawable:
+        drawable = image.active_drawable
+    if not image.filename:
+        pdb.gimp_message('Image must be saved on disk before exporting layers.')
+        return
+    with undogroup(image):
+        for i, layer in iterate_layer_visibility(image, keep_bg):
+            exportn(image, layer, layer.name, True, False, tagsource, vectors=None)
+
 
 
 def _pastenandremove(image, drawable, read_index, pasteinto):
@@ -849,6 +1046,28 @@ register(
     )
 
 register(
+    proc_name="python-fu-colortoalpha-borders",
+    blurb="Apply colortoalpha to contours of partially-transparent image",
+    help="Shrinks the alpha mask by N steps, in the manner of Select->Shrink, inverts it, traces it into a path for smoothing, and applies color to alpha."
+         " Overall effect is to remove white 'haloing' from extracted objects (eg. areas cut out from a scanned drawing)"
+    ,
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Color to alpha (contour ed_ges)"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            (PF_INT, "radius", "radius", 1),
+            ],
+    results=[],
+    function=colortoalpha_borders,
+    menu=("<Image>/Layer/Transparency"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
     proc_name="python-fu-pastenandremove",
     blurb="Paste latest Named buffer as new layer, and remove it from the list of buffers",
     help=("Note that it currently isn't possible to paste as a new channel."),
@@ -891,7 +1110,9 @@ register(
 register(
     proc_name="python-fu-exportclipping",
     blurb="Export current selection to file",
-    help=(""),
+    help=("presuffix specifies a string that is prepended to the suffix. This is mainly for interactive use where you may want to use"
+          "a common initial part for the suffix, for example '{layername}'. colortoalpha applies colortoalpha, smoothly, around the contours of the extracted object,"
+          "with the specified radius (<=0 meaning 'Don't apply')"),
     author="David Gowers",
     copyright="David Gowers",
     date=("2015"),
@@ -902,13 +1123,36 @@ register(
             (PF_LAYER, "drawable", "drawable", None),
             (PF_STRING, "suffix", "_Suffix", ''),
             (PF_BOOL, "visible", "Copy _Visible", True),
-            (PF_BOOL, "tagsource", "TMSU-tag source_info", True)
+            (PF_BOOL, "autocrop", "Autocrop _Result", False),
+            (PF_BOOL, "tagsource", "TMSU-tag source_info", True),
+            (PF_STRING, "presuffix", "_Pre-suffix", ''),
+            (PF_INT, "colortoalpha", "_Colortoalpha edge radius", 0),
             ],
     results=[],
     function=exportn,
     menu=("<Image>/Edit"),
     domain=("gimp20-python", gimp.locale_directory)
     )
+
+register(
+    proc_name="python-fu-serial-export",
+    blurb="Export to the current export filename, appending a numeric suffix (eg. foo.png -> foo-02.png) if a file with that name already exists",
+    help=("If export filename is unset, takes no action. Used to export several variants of an image quickly for comparison."),
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Seria_l export"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            ],
+    results=[],
+    function=serialexport,
+    menu=("<Image>/File"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
 
 register(
     proc_name="python-fu-export-clippings-from-vectors",
@@ -932,6 +1176,27 @@ register(
             ],
     results=[],
     function=exportfromvectors,
+    menu=("<Image>/File"),
+    domain=("gimp20-python", gimp.locale_directory)
+    )
+
+register(
+    proc_name="python-fu-export-layers",
+    blurb="Export the selected pixels within each of the layers in the image, to a corresponding file",
+    help="If keep_bg is true, the lowest layer is used as a background for each of the other layers (and is not itself exported)",
+    author="David Gowers",
+    copyright="David Gowers",
+    date=("2015"),
+    label=("Export _Layers"),
+    imagetypes=("*"),
+    params=[
+            (PF_IMAGE, "image", "image", None),
+            (PF_LAYER, "drawable", "drawable", None),
+            (PF_BOOL, "keep_bg", "_Keep BG", True),
+            (PF_BOOL, "tagsource", "TMSU tag source_info", True),
+            ],
+    results=[],
+    function=exportlayers,
     menu=("<Image>/File"),
     domain=("gimp20-python", gimp.locale_directory)
     )
