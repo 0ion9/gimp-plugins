@@ -30,6 +30,18 @@ MODES = (
  (_('Behind(?)'), BEHIND_MODE),
 )
 MODELIST = tuple(v[0] for v in MODES)
+#
+# some modes have a 'neutral color' that results in no change; we try to use this when creating a new layer without alpha.
+#
+# Note that the pairs (MULTIPLY, DIVIDE) and (ADD, SUB) each have inverse effects with the same neutral color
+# (eg. multiply reduces brightness proportional to distance from 255, divide increases brightness proportional to distance from 0)
+#
+# Other modes have no neutral color and obtaining 0 effect is only done via setting alpha=0 or layer_opacity=0
+MODENEUTRALCOLOR = (
+ ({LIGHTEN_ONLY_MODE, ADDITION_MODE, SCREEN_MODE, SUBTRACT_MODE, DODGE_MODE}, (0, 0, 0)),
+ ({DARKEN_ONLY_MODE, MULTIPLY_MODE, BURN_MODE, DIVIDE_MODE}, (255, 255, 255)),
+ ({GRAIN_MERGE_MODE, GRAIN_EXTRACT_MODE, OVERLAY_MODE, HARDLIGHT_MODE, SOFTLIGHT_MODE}, (128, 128, 128))
+)
 
 def without_group_layers(layerlist):
     """Returns a recursively flattened list of layers.
@@ -47,7 +59,15 @@ def new_layer(image, drawable, name, mode, opacity, alpha):
     layertype = image.layers[0].type
     mode = MODES[mode][-1]
     layer = pdb.gimp_layer_new(image, image.width, image.height, layertype, name, opacity, mode)
-    pdb.gimp_drawable_fill(layer, WHITE_FILL)
+    for members, fillcolor in MODENEUTRALCOLOR:
+        if mode in members:
+            pdb.gimp_context_push()
+            pdb.gimp_context_set_background(fillcolor)
+            pdb.gimp_drawable_fill(layer, BACKGROUND_FILL)
+            pdb.gimp_context_pop()
+            break
+    else:
+        pdb.gimp_drawable_fill(layer, WHITE_FILL)
     pdb.gimp_image_insert_layer(image, layer, None, -1)
     if alpha:
         pdb.gimp_layer_add_alpha(layer)
