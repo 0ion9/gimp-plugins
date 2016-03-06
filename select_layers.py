@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from gimpfu import *
+from array import array
 
 gettext.install("gimp20-python", gimp.locale_directory, unicode=True)
 
@@ -9,6 +10,7 @@ SHELL, REGEX = 0, 1
 RENAME, IGNORE = 0, 1
 PRI_RNS, PRI_NRS, PRI_SRN, PRI_NSR = 0, 1, 2, 3
 ACTIVEGROUP, ALL = 0, 1
+IGNORE_SEL, IN_SEL, NOT_IN_SEL = 0, 1, 2
 
 def _tosort(layerlist, parent = None, depth = 0):
     """Returns a list of lists of layers to sort, depth-first"""
@@ -41,7 +43,7 @@ def _affected_layers(image, scope):
 
 
 
-def matches(drawable,  pattern, custom):
+def matches(drawable,  pattern, selection):
     """Returns whether drawable matches the filter.
     
     Parameters
@@ -52,8 +54,19 @@ def matches(drawable,  pattern, custom):
     """
     if not pattern.match(drawable.name):
         return False
-#    if not custom.matches(drawable):
-#        return False
+
+    # selection != 0: examine selection mask within layer bounds
+    #                 if it contains nonzero pixels, set in_selection = True
+    #
+    # selection = 2: invert meaning (only select items that DON'T intersect with selection mask)
+
+    if selection != IGNORE_SEL:
+       pr = drawable.image.selection.get_pixel_rgn(drawable.offsets[0], drawable.offsets[1], drawable.width, drawable.height)
+       a = array('B', pr[:,:])
+       in_selection = sum(a) > 0
+       if selection == NOT_IN_SEL:
+           in_selection = not in_selection
+       return in_selection
     return True
     
 
@@ -79,13 +92,13 @@ def sort_key(priority, *args):
 #XXX select_channels?
 
 # Custom criteria aren't implemented yet.
-def select_layers(image, drawable, action, patterntype, pattern): #, custom):
+def select_layers(image, drawable, action, patterntype, pattern, selection):
     import re
     pdb.gimp_image_undo_group_start(image)
     old = list(image.layers)
     pattern = compile_pattern(patterntype, pattern)
     for l in old:
-        m = matches(l, pattern, None)
+        m = matches(l, pattern, selection)
         if action == DISCARD:
             m = not m
         if m is not True:
@@ -164,6 +177,11 @@ register(
               (_("Shell pattern"),
                _("Python Regexp"))),
             (PF_STRING, "pattern", "Pattern:", "*"),
+            (PF_OPTION, "selection", "Selection Mask:", 0,
+              (_("Ignore"),
+               _("Intersects layer bounds"),
+               _("Doesn't intersect layer bounds"),
+              )),
             ],
     results=[],
     function=select_layers,
