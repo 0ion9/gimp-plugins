@@ -722,7 +722,7 @@ def colortoalpha_borders(image, drawable, radius):
     # * crop +1,+1.. -1,-1
     # * restore drawable type
     #
-    if radius <= 0:
+    if radius == 0:
         return
     itype = image.base_type
     ifunc = pdb.gimp_image_convert_grayscale
@@ -734,19 +734,24 @@ def colortoalpha_borders(image, drawable, radius):
     else:
         # XXX un-indexes images.
         pdb.gimp_image_convert_rgb(image)
-    pdb.gimp_image_resize(image, image.width + 2, image.height + 2, 1, 1)
-    for l in image.layers:
-        pdb.gimp_layer_resize_to_image_size(l)
 
-    pdb.gimp_selection_all(image)
-    pdb.gimp_image_select_item(image, CHANNEL_OP_SUBTRACT, image.layers[0])
-    pdb.gimp_selection_grow(image, radius)
-    pdb.python_fu_selection_to_path(image, image.layers[0], 1, 1.0, True, 0.2, 10, 1, True, False, 0.0)
+    if radius > -1:
+        pdb.gimp_image_resize(image, image.width + 2, image.height + 2, 1, 1)
+        for l in image.layers:
+            pdb.gimp_layer_resize_to_image_size(l)
+
+        pdb.gimp_selection_all(image)
+        pdb.gimp_image_select_item(image, CHANNEL_OP_SUBTRACT, image.layers[0])
+        pdb.gimp_selection_grow(image, radius)
+        pdb.python_fu_selection_to_path(image, image.layers[0], 1, 1.0, True, 0.2, 10, 1, True, False, 0.0)
 
     pdb.plug_in_colortoalpha(image, drawable or image.layers[0], (255,255,255))
-    pdb.gimp_image_resize(image, image.width - 2, image.height - 2, -1, -1)
-    for l in image.layers:
-        pdb.gimp_layer_resize_to_image_size(l)
+
+    if radius > -1:
+        pdb.gimp_image_resize(image, image.width - 2, image.height - 2, -1, -1)
+        for l in image.layers:
+            pdb.gimp_layer_resize_to_image_size(l)
+
     ifunc(image)
     pdb.gimp_image_undo_group_end(image)
 
@@ -783,7 +788,7 @@ def exportn(image, drawable, suffix, visible=False, autocrop=False, tagsource=Tr
                 pdb.gimp_message('Only png format is currently supported for indexed export, falling back to non-indexed for %r.' % bname)
             else:
                 apply_palette(newimg, ipalette)
-        if colortoalpha > 0:
+        if colortoalpha != 0:
             colortoalpha_borders(newimg, newimg.layers[0], colortoalpha)
         if autocrop:
             pdb.plug_in_autocrop(newimg, newimg.layers[0])
@@ -1049,7 +1054,8 @@ register(
     proc_name="python-fu-colortoalpha-borders",
     blurb="Apply colortoalpha to contours of partially-transparent image",
     help="Shrinks the alpha mask by N steps, in the manner of Select->Shrink, inverts it, traces it into a path for smoothing, and applies color to alpha."
-         " Overall effect is to remove white 'haloing' from extracted objects (eg. areas cut out from a scanned drawing)"
+         " Overall effect is to remove white 'haloing' from extracted objects (eg. areas cut out from a scanned drawing)."
+         " Radius values < 0 are equivalent to 'use current selection mask'."
     ,
     author="David Gowers",
     copyright="David Gowers",
