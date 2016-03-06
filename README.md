@@ -17,3 +17,4 @@ Plugin synopses
 * *sel2path* : High quality selection->path conversion via PoTrace. Typically much more accurate than GIMP's built in Selection To Path function, which uses AutoTrace instead.
 * *select_layers* : 'Grep' for layers. Removes layers that do/don't match a glob or Python regexp pattern, or intersect with the selection mask.
 * *split_rectangles* : Given an input layer containing isolated rectangular areas within a transparent 'sea', extract all such rectangles as layers. Slow.
+* *pixelscale* : Easily scale/shrink the image by an integer factor with nearest-neighbour interpolation. Also supports Wide/Tall pixels as found on C64 or CPC, doubling the width or height of the 'pixels'.
